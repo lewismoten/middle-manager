@@ -12,6 +12,7 @@ import {
   parseMatchRules,
   parseProcStat,
   parsePs,
+  redactSecrets,
   type GitInfo,
   type ProcInfo,
 } from '../server/agents/process-scan.ts';
@@ -147,6 +148,17 @@ describe('process-scan', () => {
     );
     expect(cleanRemote('git@example.com:o/r.git')).toBe('git@example.com:o/r.git');
     expect(cleanRemote(null)).toBeNull();
+  });
+
+  it('masks credentials in command lines', () => {
+    expect(
+      redactSecrets(
+        'OPENAI_API_KEY=abc123 codex exec --api-key "s e c" --token=xyz -p hi sk-abcdefghijklmnopqrstu',
+      ),
+    ).toBe('OPENAI_API_KEY=*** codex exec --api-key *** --token=*** -p hi ***');
+    expect(redactSecrets('claude -p "fix the auth bug" --model opus')).toBe(
+      'claude -p "fix the auth bug" --model opus',
+    );
   });
 
   it('rejects malformed match rules', () => {

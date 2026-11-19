@@ -216,6 +216,26 @@ export function matchProcesses(
   return [...hits.values()];
 }
 
+// ---- Secrets ----
+
+const SECRET_FLAG =
+  /(--?[\w-]*(?:key|token|secret|password|passwd|auth)[\w-]*)(=|\s+)("[^"]*"|'[^']*'|\S+)/gi;
+const SECRET_ENV =
+  /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|AUTH)[A-Z0-9_]*)=("[^"]*"|'[^']*'|\S+)/g;
+const SECRET_VALUE =
+  /\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|mm_[A-Za-z0-9_-]{30,}|Bearer\s+[A-Za-z0-9._~+/=-]{16,})/g;
+
+/**
+ * Masks things that look like credentials in a command line before it is stored: the runs API
+ * is readable by anyone on the network. Best effort, not a guarantee.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(SECRET_FLAG, (_m, flag: string, sep: string) => `${flag}${sep}***`)
+    .replace(SECRET_ENV, (_m, name: string) => `${name}=***`)
+    .replace(SECRET_VALUE, '***');
+}
+
 // ---- Git ----
 
 export interface GitInfo {
@@ -286,12 +306,12 @@ export async function discoverProcesses(
       const { model, prompt } = argvDetails(m.proc.argv);
       return {
         pid: m.proc.pid,
-        command: m.proc.command.slice(0, 4000),
+        command: redactSecrets(m.proc.command).slice(0, 4000),
         agent_kind: m.rule.kind ?? inferKind(m.proc.command),
         role: m.rule.role ?? (m.parentPid ? 'sub-agent' : 'agent'),
         started_at: m.proc.started_at,
         model,
-        prompt,
+        prompt: prompt === null ? null : redactSecrets(prompt),
         harness: m.rule.pattern,
         origin: g.origin,
         branch: g.branch,

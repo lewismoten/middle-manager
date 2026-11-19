@@ -4,7 +4,7 @@
 import { execFile } from 'node:child_process';
 import { readlinkSync } from 'node:fs';
 import { promisify } from 'node:util';
-import { gitCache, inferKind, argvDetails } from './process-scan.ts';
+import { argvDetails, gitCache, inferKind, redactSecrets } from './process-scan.ts';
 import type { AgentKind, Discovered, RunStatus } from './runs.ts';
 
 const run = promisify(execFile);
@@ -138,7 +138,7 @@ export async function discoverUnits(
     units.map(async (u): Promise<Discovered> => {
       const cwd = u.cwd ?? cwdOf(u.main_pid);
       const g = await git(cwd);
-      const command = u.command ?? u.description ?? u.unit;
+      const command = redactSecrets(u.command ?? u.description ?? u.unit);
       const status = unitStatus(u);
       const { model, prompt } = argvDetails(command.split(/\s+/));
       return {

@@ -30,6 +30,7 @@ npm start
 Full steps, including the systemd user unit: [docs/install.md](docs/install.md).
 
 Agents report their runs with one `curl` at start and one at end: [docs/agents.md](docs/agents.md).
+
 Font credits: [NOTICE.md](NOTICE.md).
 
 ## License
