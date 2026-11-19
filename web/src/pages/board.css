@@ -1,0 +1,128 @@
+body:has(.board-page) {
+  display: grid;
+  height: 100dvh;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+main:has(.board-page) {
+  min-height: 0;
+  width: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 10px;
+}
+.board-page {
+  display: grid;
+  gap: 8px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  min-height: 0;
+}
+.board-tools,
+.sprint-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.board-tools > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.board-scroll {
+  overflow: auto;
+  min-height: 0;
+}
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+.board-column {
+  background: var(--lane);
+  border-radius: 6px;
+  padding: 8px;
+  border-top: 3px solid var(--muted);
+  min-height: 100px;
+}
+.board-column.doing {
+  border-color: var(--doing);
+}
+.board-column.blocked {
+  border-color: var(--block);
+}
+.board-column.review {
+  border-color: var(--ask);
+}
+.board-column.done {
+  border-color: var(--done);
+}
+.board-column h3 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 8px;
+}
+.board-card {
+  display: grid;
+  text-align: left;
+  width: 100%;
+  margin-bottom: 6px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: var(--panel);
+}
+.board-page small {
+  font: 12px var(--mono);
+  color: var(--muted);
+}
+.board-page button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+dialog.board-sheet {
+  margin: 0 0 0 auto;
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 0;
+  padding: 12px;
+  overflow: auto;
+}
+.board-form,
+.board-form label {
+  display: grid;
+  gap: 6px;
+}
+.board-form > * {
+  min-width: 0;
+}
+.board-form textarea {
+  width: 100%;
+}
+.board-event {
+  border-top: 1px solid var(--line);
+  padding-block: 6px;
+}
+@media (max-width: 900px) {
+  .board-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 550px) {
+  .board-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.velocity-row {
+  display: grid;
+  grid-template-columns: minmax(7em, 1fr) 3fr 2em;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.velocity-row svg {
+  width: 100%;
+  height: 12px;
+  background: var(--lane);
+}
+.sprint-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+}

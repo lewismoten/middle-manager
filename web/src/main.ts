@@ -1,3 +1,4 @@
+import { board } from './pages/board.ts';
 import '@fontsource/ibm-plex-sans/latin-400.css';
 import '@fontsource/ibm-plex-sans/latin-500.css';
 import '@fontsource/ibm-plex-sans/latin-600.css';
@@ -165,6 +166,19 @@ async function settingsLive(): Promise<HTMLElement> {
 }
 
 function renderPage(tab: Tab, focus: boolean): void {
+  if (tab.id === 'board') {
+    const head = h('h1', { id: 'page-title', tabindex: '-1' }, tab.title);
+    main.replaceChildren(
+      head,
+      board(
+        Boolean(who?.scopes.some((s) => s === 'write' || s === 'admin')),
+        config?.projects ?? [],
+      ),
+    );
+    document.title = tab.title + ' · ' + (config?.site.name ?? 'middle-manager');
+    if (focus) head.focus({ preventScroll: true });
+    return;
+  }
   const arrives = [...new Set(tab.coming.map((c) => c.slice))].filter((s) => s !== 'S1');
   const head = h(
     'div',
@@ -257,6 +271,7 @@ function openSignIn(): void {
       setToken(null);
       who = null;
       renderSignInButton();
+      if (tabFromHash(location.hash).id === 'board') route(false);
       dialog.close();
     });
   } else {
@@ -315,6 +330,7 @@ form.addEventListener('submit', (ev) => {
       setToken(token);
       who = res.token;
       renderSignInButton();
+      if (tabFromHash(location.hash).id === 'board') route(false);
       dialog.close();
     })
     .catch((err: unknown) => {
@@ -345,13 +361,13 @@ async function boot(): Promise<void> {
   if (cfg.status === 'fulfilled') {
     config = cfg.value;
     byId('site-name').textContent = config.site.name;
-    route(false);
   }
   if (me.status === 'fulfilled') {
     who = me.value.token;
     if (!who && getToken()) setToken(null); // revoked or unknown: forget it
     renderSignInButton();
   }
+  route(false);
 }
 
 void boot();

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 // S1 routes: health, public config, DB stats, and who the current token belongs to.
 
 import type { Config } from '../config.ts';
@@ -32,6 +33,14 @@ export function publicConfig(config: Config, version: string) {
 }
 
 export const coreRoutes: Route[] = [
+  {
+    method: 'GET',
+    path: '/openapi.yaml',
+    handler: ({ res }) => {
+      res.setHeader('content-type', 'application/yaml');
+      res.end(readFileSync(new URL('../../docs/openapi.yaml', import.meta.url)));
+    },
+  },
   {
     method: 'GET',
     path: '/health',

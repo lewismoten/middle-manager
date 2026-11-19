@@ -38,6 +38,18 @@ collectors:
 const config = loadConfig(configFile);
 const db = openAppDb(config);
 createToken(db, 'e2e', ['write'], new Date(), E2E_TOKEN);
+for (const [status, title] of Object.entries({
+  todo: 'Check build cache',
+  doing: 'Review queue metrics',
+  review: 'Validate release notes',
+  done: 'Index sample logs',
+}))
+  db.prepare(
+    "INSERT INTO tasks (title,status,assignee,project_id,sprint,body,created_at,updated_at) VALUES(?,?,'worker-a','main','Iteration A','Verify **sample output**.',datetime('now'),datetime('now'))",
+  ).run(title, status);
+db.prepare(
+  "UPDATE tasks SET external_ref='hermes-kanban:sample:1',origin='hermes-kanban' WHERE title='Review queue metrics'",
+).run();
 const running = await startServer({ config, db });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 

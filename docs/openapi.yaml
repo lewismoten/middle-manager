@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: middle-manager Board API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+components:
+  securitySchemes:
+    token: { type: http, scheme: bearer }
+  schemas:
+    TaskFields:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 1 }
+        status: { enum: [backlog, todo, doing, review, blocked, done] }
+        short_name: &text { type: [string, 'null'] }
+        body: *text
+        priority: { type: [integer, 'null'] }
+        project_id: *text
+        sprint: *text
+        assignee: *text
+        lane: *text
+paths:
+  /tasks:
+    get:
+      summary: List cards matching all supplied filters
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: project, schema: { type: string } }
+        - { in: query, name: assignee, schema: { type: string } }
+        - { in: query, name: sprint, schema: { type: string } }
+        - { in: query, name: q, schema: { type: string }, description: Case-insensitive substring }
+      responses:
+        '200': { description: Array of matching tasks in descending id order }
+    post:
+      summary: Create a local card
+      security: &write [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/TaskFields' }
+                - { required: [title] }
+      responses:
+        '201': { description: Created task }
+  /tasks/{id}:
+    parameters: &taskId [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: Read a task with its chronological events and linked runs
+      responses:
+        '200': { description: Task object with events and runs arrays }
+        '404': { description: Unknown task }
+    patch:
+      summary: Edit fields and record status transitions
+      security: *write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaskFields' }
+      responses:
+        '200': { description: Updated task }
+        '409': { description: Imported card }
+  /tasks/{id}/events:
+    parameters: *taskId
+    post:
+      summary: Append an event attributed to the token owner
+      security: *write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, data]
+              properties:
+                kind: { type: string, description: Imported cards accept comment or note }
+                data:
+                  { type: object, description: Notes require text. Links may supply branch or pr. }
+      responses:
+        '201': { description: Appended event }
+  /collectors/{id}/run:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    post:
+      summary: Run a configured Hermes-kanban importer
+      security: *write
+      responses:
+        '201': { description: Counts of boards and cards processed }

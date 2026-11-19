@@ -1,3 +1,4 @@
+import { boardRoutes } from './board/routes.ts';
 // Builds and starts the HTTP server for a loaded config.
 
 import { createServer, type Server } from 'node:http';
@@ -40,7 +41,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const db = opts.db ?? openAppDb(opts.config);
   const state = buildState(opts.config, db, opts.webRoot);
-  const handler = createApp(state, [...coreRoutes, ...(opts.extraRoutes ?? [])]);
+  const handler = createApp(state, [...coreRoutes, ...boardRoutes, ...(opts.extraRoutes ?? [])]);
   const server = createServer((req, res) => void handler(req, res));
 
   const stopRetention =
