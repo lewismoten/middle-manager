@@ -1,6 +1,6 @@
 # middle-manager
 
-*It watches others work, schedules meetings, and reports the burn.*
+_It watches others work, schedules meetings, and reports the burn._
 
 A self-hosted dashboard and JSON API for keeping an eye on a fleet of AI coding agents:
 
@@ -17,6 +17,18 @@ token. Machines, plans, models and folders all come from a config file, so you c
 own setup.
 
 Status: early development. See [SPEC.md](SPEC.md).
+
+## Quick start
+
+```sh
+npm ci && npm run build
+cp config/middle-manager.example.yaml config/middle-manager.yaml   # then edit it
+npx middle-manager token create laptop
+npm start
+```
+
+Full steps, including the systemd user unit: [docs/install.md](docs/install.md).
+Font credits: [NOTICE.md](NOTICE.md).
 
 ## License
 

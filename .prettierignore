@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+coverage/
+test-results/
+playwright-report/
+reference/
+package-lock.json
+SPEC.md
