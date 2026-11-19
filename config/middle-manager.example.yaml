@@ -50,6 +50,9 @@ documents: # markdown folders shown on the Notes page; private ones need a token
 
 collectors: # importers; each can be scheduled as a job
   - { id: processes, kind: process-scan, match: ['codex exec', 'claude -p'] }
+  # Existing plan readings (time,source,machine,window,used_pct,resets_at,how); map CSV sources to plan ids.
+  # Run with: middle-manager import old-readings
+  # - { id: old-readings, kind: csv-import, path: ~/plan-usage.csv, map: { claude: claude, codex: codex } }
 
 retention: # keeps the database from growing without bound
   plan_readings_days: 120
