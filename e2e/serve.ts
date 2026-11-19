@@ -1,5 +1,6 @@
 // Starts the built server for Playwright with a temporary config and database.
-// Removes both on exit. Usage: node e2e/serve.ts <port>
+// Removes both on exit. Usage: node e2e/serve.ts [board]
+// With `board`, serves only the 706-card synthetic board (e2e/fixtures/board.ts) on E2E_BOARD_PORT.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,12 +9,15 @@ import { createToken } from '../server/auth.ts';
 import { loadConfig } from '../server/config.ts';
 import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
-import { E2E_PORT, E2E_TOKEN } from './constants.ts';
+import { E2E_BOARD_PORT, E2E_PORT, E2E_TOKEN } from './constants.ts';
 import { seedPlanReadings } from './seed.ts';
 import { seedAgents } from './fixtures/agents.ts';
 import { seedSchedules } from './fixtures/schedules.ts';
 import { seedNotes } from './fixtures/notes.ts';
 import { seedConnections } from './fixtures/connections.ts';
+import { seedBoard } from './fixtures/board.ts';
+
+const bigBoard = process.argv[2] === 'board';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -22,7 +26,7 @@ const conn = await seedConnections(dir);
 writeFileSync(
   configFile,
   `site: { name: "Test fleet", timezone: "UTC" }
-server: { host: 127.0.0.1, port: ${E2E_PORT} }
+server: { host: 127.0.0.1, port: ${bigBoard ? E2E_BOARD_PORT : E2E_PORT} }
 database: { path: ${JSON.stringify(path.join(dir, 'mm.db'))} }
 machines:
   - { id: server-1, name: "Build server", role: "agents run here" }
@@ -51,21 +55,24 @@ collectors:
 const config = loadConfig(configFile);
 const db = openAppDb(config);
 createToken(db, 'e2e', ['write'], new Date(), E2E_TOKEN);
-for (const [status, title] of Object.entries({
-  todo: 'Check build cache',
-  doing: 'Review queue metrics',
-  review: 'Validate release notes',
-  done: 'Index sample logs',
-}))
-  db.prepare(
-    "INSERT INTO tasks (title,status,assignee,project_id,sprint,body,created_at,updated_at) VALUES(?,?,'worker-a','main','Iteration A','Verify **sample output**.',datetime('now'),datetime('now'))",
-  ).run(title, status);
+if (bigBoard) seedBoard(db);
+else
+  for (const [status, title] of Object.entries({
+    todo: 'Check build cache',
+    doing: 'Review queue metrics',
+    review: 'Validate release notes',
+    done: 'Index sample logs',
+  }))
+    db.prepare(
+      "INSERT INTO tasks (title,status,assignee,project_id,sprint,body,created_at,updated_at) VALUES(?,?,'worker-a','main','Iteration A','Verify **sample output**.',datetime('now'),datetime('now'))",
+    ).run(title, status);
 db.prepare(
   "UPDATE tasks SET external_ref='hermes-kanban:sample:1',origin='hermes-kanban' WHERE title='Review queue metrics'",
 ).run();
 seedPlanReadings(db);
-seedAgents(db);
 seedSchedules(db, path.join(dir, 'jobs.json'));
+// The agents fixture adds its own cards; the large board keeps the exact synthetic distribution.
+if (!bigBoard) seedAgents(db);
 // Collectors would scan this host's real processes and timers; the smoke tests use seeded data
 // only (job timers stay off too; "run now" still works).
 const running = await startServer({ config, db, agentCollectors: false, schedules: false });
