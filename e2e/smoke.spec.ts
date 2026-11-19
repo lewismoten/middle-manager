@@ -53,6 +53,9 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
       await expect(page.locator('table.pacing tbody tr')).toHaveCount(3);
       await expect(page.locator('table.pacing tr[data-plan="plan-b"] .stale')).toBeVisible();
     } else if (tab.id === 'board') {
+      // Phones show one column at a time; the card is in Doing.
+      if ((page.viewportSize()?.width ?? 0) <= 600)
+        await page.getByLabel('Column', { exact: true }).selectOption('doing');
       await expect(page.getByRole('button', { name: /Review queue metrics/ })).toBeVisible();
     } else {
       await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);

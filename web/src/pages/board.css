@@ -10,10 +10,17 @@ main:has(.board-page) {
   padding-bottom: 10px;
 }
 .board-page {
-  display: grid;
+  /* The page is one screen: the board takes the space left under the header and filters,
+     and every column scrolls its own card list. */
+  --col: 11rem;
+  --strip: 2.75rem;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;
+}
+.board-page > * {
+  flex: none;
 }
 .board-tools,
 .sprint-cards {
@@ -26,21 +33,45 @@ main:has(.board-page) {
   min-width: 0;
   max-width: 100%;
 }
+.board-tools label {
+  white-space: nowrap;
+}
 .board-scroll {
+  flex: 1 1 0;
   overflow: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+}
+.board-page[data-view='board'] .board-scroll:not(.lanes) {
+  display: flex;
+  flex-direction: column;
 }
 .board-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(var(--col), 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  align-items: start;
   gap: 8px;
+  flex: 1 1 0;
+  min-height: 0;
+}
+.board-scroll.lanes .board-grid {
+  height: min(26rem, 62dvh);
+}
+.board-lane h2 {
+  font-size: 15px;
+  margin: 8px 0 6px;
 }
 .board-column {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  min-height: 0;
+  min-width: 0;
   background: var(--lane);
   border-radius: 6px;
-  padding: 8px;
   border-top: 3px solid var(--muted);
-  min-height: 100px;
+  overflow: hidden;
 }
 .board-column.doing {
   border-color: var(--doing);
@@ -54,19 +85,95 @@ main:has(.board-page) {
 .board-column.done {
   border-color: var(--done);
 }
-.board-column h3 {
+.board-col-head {
   display: flex;
-  justify-content: space-between;
-  margin: 0 0 8px;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  font-size: 14px;
+  background: var(--lane);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.board-col-head .count {
+  margin-left: auto;
+}
+.board-col-head button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.board-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-list > * {
+  flex: none;
+}
+.board-list > p {
+  margin: 0;
+}
+.board-column.collapsed {
+  height: 100%;
+  max-height: 12rem;
+}
+.board-strip {
+  writing-mode: vertical-rl;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 12px var(--mono);
+  white-space: nowrap;
 }
 .board-card {
   display: grid;
   text-align: left;
   width: 100%;
-  margin-bottom: 6px;
   white-space: normal;
   overflow-wrap: anywhere;
   background: var(--panel);
+}
+.board-more {
+  font-size: 12px;
+  min-height: 28px;
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+  width: 100%;
+}
+.board-card small {
+  overflow-wrap: break-word;
+}
+.compact .board-card {
+  display: block;
+  padding: 4px 8px;
+  min-height: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compact .board-card small {
+  display: none;
+}
+.compact .board-list {
+  gap: 4px;
+}
+.board-phone-pick {
+  display: none;
 }
 .board-page small {
   font: 12px var(--mono);
@@ -99,14 +206,22 @@ dialog.board-sheet {
   border-top: 1px solid var(--line);
   padding-block: 6px;
 }
-@media (max-width: 900px) {
-  .board-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+/* Phone: one column at a time, chosen with the Column select, still scrolling inside. */
+@media (max-width: 600px) {
+  .board-page[data-view='board'] .board-phone-pick {
+    display: block;
+    width: 100%;
+    min-height: 36px;
   }
-}
-@media (max-width: 550px) {
   .board-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .board-column:not([data-active]),
+  .board-empty-toggle {
+    display: none;
+  }
+  .board-column.collapsed .board-strip {
+    writing-mode: horizontal-tb;
   }
 }
 .velocity-row {
