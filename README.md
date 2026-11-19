@@ -10,7 +10,10 @@ A self-hosted dashboard and JSON API for keeping an eye on a fleet of AI coding 
 - **Agents**: every agent run on every machine: model, tokens, task, prompt, duration, branch, and
   whether it is an orchestrator, agent or sub-agent.
 - **Schedules**: cron jobs that collect usage and run checks, plus a view of other schedulers.
-- **Notes**: ops logs, chat summaries and handoffs, rendered from markdown folders.
+- **Notes**: ops logs, chat summaries and handoffs, rendered from markdown folders. Folders marked
+  private need a token to read.
+- **Connections**: how each plan and local model is connected, with a status check and the time of
+  the last reading.
 
 Runs as one Node process with one SQLite file. Anyone on your network can read; changes need an API
 token. Machines, plans, models and folders all come from a config file, so you can point it at your
