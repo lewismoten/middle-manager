@@ -56,6 +56,9 @@ collectors: # importers; each can be scheduled as a job
   # - { id: old-readings, kind: csv-import, path: ~/plan-usage.csv, map: { claude: claude, codex: codex } }
   - { id: workers, kind: systemd-workers, prefix: 'worker-' } # systemd-run --user --unit worker-...
   - { id: tokens, kind: session-tokens } # token totals from Claude Code and Codex session logs
+  # Read-only mirror on the Schedules page (re-read every every_s seconds, default 300).
+  - { id: hermes-cron, kind: hermes-cron, path: ~/.hermes/cron/jobs.json }
+  - { id: timers, kind: systemd-timers, scope: user } # scope: user | system; prefix: [backup-] filters
 
 retention: # keeps the database from growing without bound
   plan_readings_days: 120

@@ -12,6 +12,9 @@ import { coreRoutes } from './routes/core.ts';
 import { planRoutes } from './plans/routes.ts';
 import { scheduleAgentCollectors } from './agents/collect.ts';
 import { runRoutes } from './agents/routes.ts';
+import { scheduleMirrors } from './schedules/mirror.ts';
+import { scheduleRoutes } from './schedules/routes.ts';
+import { forgetScheduler, schedulerFor } from './schedules/scheduler.ts';
 import { ROOT_DIR, VERSION } from './version.ts';
 
 export const DEFAULT_WEB_ROOT = path.join(ROOT_DIR, 'dist', 'web');
@@ -28,6 +31,8 @@ export interface StartOptions {
   retention?: boolean;
   /** Run the agent collectors (process-scan, systemd-workers, session-tokens). Default true. */
   agentCollectors?: boolean;
+  /** Run job timers and the Hermes cron / systemd timer mirror. Default true. */
+  schedules?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -51,6 +56,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     ...boardRoutes,
     ...planRoutes,
     ...runRoutes,
+    ...scheduleRoutes,
     ...(opts.extraRoutes ?? []),
   ]);
   const server = createServer((req, res) => void handler(req, res));
@@ -74,6 +80,11 @@ export async function startServer(opts: StartOptions): Promise<Running> {
       ? () => {}
       : scheduleAgentCollectors(db, opts.config, (msg) => console.error(msg));
 
+  const scheduler = schedulerFor(db, opts.config);
+  const stopMirrors =
+    opts.schedules === false ? () => {} : scheduleMirrors(db, opts.config, (m) => console.error(m));
+  if (opts.schedules !== false) scheduler.start();
+
   const host = opts.host ?? opts.config.server.host;
   const port = opts.port ?? opts.config.server.port;
   await new Promise<void>((resolve, reject) => {
@@ -93,6 +104,9 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     closed = true;
     stopRetention();
     stopAgents();
+    stopMirrors();
+    await scheduler.stop();
+    forgetScheduler(db);
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();

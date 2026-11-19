@@ -25,6 +25,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test"
   },
   "dependencies": {
+    "croner": "^11.0.1",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

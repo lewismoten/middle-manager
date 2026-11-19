@@ -11,6 +11,7 @@ import { startServer } from '../server/server.ts';
 import { E2E_PORT, E2E_TOKEN } from './constants.ts';
 import { seedPlanReadings } from './seed.ts';
 import { seedAgents } from './fixtures/agents.ts';
+import { seedSchedules } from './fixtures/schedules.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -36,6 +37,8 @@ documents:
   - { id: private, name: "Private notes", path: ${JSON.stringify(dir)}, private: true }
 collectors:
   - { id: processes, kind: process-scan }
+  - { id: hermes-cron, kind: hermes-cron, path: ${JSON.stringify(path.join(dir, 'jobs.json'))} }
+  - { id: timers, kind: systemd-timers, prefix: [sample-] }
 `,
 );
 
@@ -56,8 +59,10 @@ db.prepare(
 ).run();
 seedPlanReadings(db);
 seedAgents(db);
-// Collectors would scan this host's real processes; the smoke tests use seeded runs only.
-const running = await startServer({ config, db, agentCollectors: false });
+seedSchedules(db, path.join(dir, 'jobs.json'));
+// Collectors would scan this host's real processes and timers; the smoke tests use seeded data
+// only (job timers stay off too; "run now" still works).
+const running = await startServer({ config, db, agentCollectors: false, schedules: false });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 
 let done = false;
