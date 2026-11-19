@@ -9,6 +9,7 @@ import { loadConfig } from '../server/config.ts';
 import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
 import { E2E_PORT, E2E_TOKEN } from './constants.ts';
+import { seedPlanReadings } from './seed.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -21,6 +22,8 @@ machines:
   - { id: server-1, name: "Build server", role: "agents run here" }
 plans:
   - { id: plan-a, name: "Plan A", provider: manual, windows: [weekly, five_hour] }
+  - { id: plan-b, name: "Plan B", provider: manual, empty_buffer_hours: 2 }
+  - { id: plan-c, name: "Plan C", provider: manual }
 models:
   plan-a: [small, large]
 local_models:
@@ -38,6 +41,7 @@ collectors:
 const config = loadConfig(configFile);
 const db = openAppDb(config);
 createToken(db, 'e2e', ['write'], new Date(), E2E_TOKEN);
+seedPlanReadings(db);
 const running = await startServer({ config, db });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 

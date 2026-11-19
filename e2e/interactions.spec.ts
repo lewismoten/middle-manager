@@ -62,6 +62,35 @@ test.describe('interactions', () => {
     expect(await page.evaluate(() => localStorage.getItem('mm.token'))).toBeNull();
   });
 
+  test('burndown: plan picker, hover read-out and posting a reading', async ({ page, request }) => {
+    await page.goto('/#/burndown');
+    await expect(page.locator('.weekly h3')).toContainText('Plan A');
+    const svg = page.locator('.weekly svg[role="img"]');
+    const box = (await svg.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.45, box.y + box.height / 2);
+    await expect(page.locator('.weekly .chart-tip')).toContainText('% used');
+
+    await page.locator('.plan-picker button', { hasText: 'Plan C' }).click();
+    await expect(page.locator('.weekly h3')).toContainText('Plan C');
+    await expect(page.locator('.weekly')).toContainText('No weekly readings yet');
+    await expect(page.locator('.plan-picker button[aria-pressed="true"]')).toHaveText('Plan C');
+
+    const res = await request.post('/api/v1/plans/plan-c/readings', {
+      headers: { authorization: `Bearer ${E2E_TOKEN}` },
+      data: {
+        used_pct: 50,
+        resets_at: new Date(Date.now() + 48 * 3600_000).toISOString(),
+      },
+    });
+    expect(res.status()).toBe(201);
+    await page.reload();
+    await expect(page.locator('.weekly h3')).toContainText('Plan C');
+    await expect(page.locator('.weekly .mode')).toHaveText('burn');
+    await page.locator('.plan-picker button', { hasText: 'Plan A' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('.weekly h3')).toContainText('Plan A');
+  });
+
   test('no horizontal overflow at 320 px on any tab', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 640 });
     for (const tab of TABS) {
