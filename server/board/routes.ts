@@ -1,6 +1,5 @@
 import { readJson, HttpError, type Route } from '../http/app.ts';
 import { object, validate, task, atomic, save, invalid } from './tasks.ts';
-import { runCollector } from './import.ts';
 export const boardRoutes: Route[] = [
   {
     method: 'GET',
@@ -96,10 +95,5 @@ export const boardRoutes: Route[] = [
         )
         .get(params.id!, new Date().toISOString(), token!.name, kind, JSON.stringify(payload));
     },
-  },
-  {
-    method: 'POST',
-    path: '/collectors/:id/run',
-    handler: ({ state, params }) => runCollector(state.db, state.config, params.id!),
   },
 ];

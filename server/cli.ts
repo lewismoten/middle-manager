@@ -1,4 +1,3 @@
-import { runCollector } from './board/import.ts';
 // middle-manager CLI: serve, token create|list|revoke, db migrate|stats.
 
 import { flagString, parseArgs } from './args.ts';
@@ -17,7 +16,6 @@ Commands:
                                 Create an API token; it is printed once
   token list                    List tokens (names, scopes, last use; never the token)
   token revoke <name>           Revoke the live token with this name
-  import <source>               Run a configured collector
   db migrate                    Apply pending schema migrations
   db stats                      Show database size and row counts
 ${IMPORT_USAGE}
@@ -59,10 +57,6 @@ export function runCli(argv: string[], out: Out = console.log): number | Promise
 
   const db = openAppDb(config);
   try {
-    if (cmd === 'import' && sub) {
-      out(JSON.stringify(runCollector(db, config, sub)));
-      return 0;
-    }
     if (cmd === 'db' && sub === 'stats') {
       const s = dbStats(db, config.database.path);
       out(`Database: ${s.path}`);

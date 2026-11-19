@@ -6,6 +6,7 @@ import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { bearer, verifyToken, type Scope, type TokenInfo } from '../auth.ts';
 import { serveStatic } from './static.ts';
+import type { CollectorHooks } from '../schedules/collectors.ts';
 
 export const API_PREFIX = '/api/v1';
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -30,6 +31,8 @@ export interface AppState {
   webRoot: string;
   /** Last result of the retention job, if it has run. */
   lastRetention?: unknown;
+  /** Host access for POST /collectors/:id/run (tests swap in fixtures). */
+  collectorHooks?: CollectorHooks;
 }
 
 export interface Ctx {

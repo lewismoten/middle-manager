@@ -85,10 +85,12 @@ paths:
   /collectors/{id}/run:
     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
     post:
-      summary: Run a configured Hermes-kanban importer
+      summary: Run any configured collector now (plan, csv-import, hermes-kanban, agent or mirror)
       security: *write
       responses:
-        '201': { description: Counts of boards and cards processed }
+        '201': { description: '{ id, kind, ok, ...counts } from the collector' }
+        '404': { description: No plan or collector with this id }
+        '502': { description: The collector ran and failed }
   # ---- Schedules (S5) ----
   /jobs:
     get:

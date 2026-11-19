@@ -11,9 +11,11 @@ import {
   AGENT_COLLECTOR_KINDS,
   defaultEnv,
   runCollector as runAgentCollector,
+  type CollectorEnv,
 } from '../agents/collect.ts';
+import type { CollectOptions } from '../plans/collectors.ts';
 import { resolveCollector, runCollector as runPlanCollector } from '../plans/service.ts';
-import { MIRROR_KINDS, runMirror } from './mirror.ts';
+import { MIRROR_KINDS, runMirror, type MirrorEnv } from './mirror.ts';
 
 export interface RunnableCollector {
   id: string;
@@ -39,24 +41,44 @@ export function runnableCollectors(config: Config): RunnableCollector[] {
   ];
 }
 
+/** Thrown when no plan or configured collector has this id. */
+export class UnknownCollectorError extends Error {}
+
+/** Host access for each collector family; tests swap these for fixtures. */
+export interface CollectorHooks {
+  agents?: CollectorEnv;
+  mirror?: MirrorEnv;
+  plans?: CollectOptions;
+}
+
 /** Runs a collector and returns its report. Throws with a short message on failure. */
-export async function runCollectorById(db: Db, config: Config, id: string): Promise<unknown> {
+export async function runCollectorById(
+  db: Db,
+  config: Config,
+  id: string,
+  hooks: CollectorHooks = {},
+): Promise<Record<string, unknown>> {
   const c = config.collectors.find((x) => x.id === id);
-  if (c?.kind === 'hermes-kanban') return runBoardCollector(db, config, id);
+  if (c?.kind === 'hermes-kanban') {
+    return { id, kind: c.kind, ok: true, ...runBoardCollector(db, config, id) };
+  }
   if (c && (AGENT_COLLECTOR_KINDS as readonly string[]).includes(c.kind)) {
-    const r = await runAgentCollector(db, config, c, defaultEnv());
+    const r = await runAgentCollector(db, config, c, hooks.agents ?? defaultEnv());
     if (!r.ok) throw new Error(r.error ?? 'collector failed');
-    return r;
+    return { ...r };
   }
   if (c && (MIRROR_KINDS as readonly string[]).includes(c.kind)) {
-    const r = await runMirror(db, config, c);
+    const r = await runMirror(db, config, c, hooks.mirror);
     if (!r.ok) throw new Error(r.error ?? 'collector failed');
-    return r;
+    return { ...r };
   }
   const target = resolveCollector(config, id);
   if (target) {
-    const r = await runPlanCollector(db, config, target);
-    return { ...r, readings: r.readings.length };
+    const r = await runPlanCollector(db, config, target, {}, hooks.plans);
+    return { id, ok: true, ...r, readings: r.readings.length };
   }
-  throw new Error(`No collector "${id}" in the config`);
+  const known = runnableCollectors(config).map((x) => x.id);
+  throw new UnknownCollectorError(
+    `No collector "${id}" in the config${known.length ? ` (collectors: ${known.join(', ')})` : ''}`,
+  );
 }
