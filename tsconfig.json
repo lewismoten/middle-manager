@@ -4,5 +4,5 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["server", "test", "e2e", "scripts", "bin", "*.config.ts"]
+  "include": ["server", "test", "scripts", "bin", "vite.config.ts", "vitest.config.ts", "eslint.config.js"]
 }
