@@ -129,6 +129,18 @@ describe('renderMarkdown', () => {
     );
   });
 
+  it('keeps adjacent inline markup out of link attributes', () => {
+    const first =
+      '<a href="https://a.example/x" target="_blank" rel="noopener noreferrer">https://a.example/x</a>';
+    const second =
+      '<a href="https://b.example/x/onclick=document.title=1337//" target="_blank" rel="noopener noreferrer">c</a>';
+    expect(
+      renderMarkdown('https://a.example/x[c](https://b.example/x/onclick=document.title=1337//)'),
+    ).toBe(`<p>${first}${second}</p>`);
+    expect(renderInline('https://a.example/x`code`')).toBe(`${first}<code>code</code>`);
+    expect(renderInline('[c](https://a.example/x`code`)')).toBe('<span class="md-link">c</span>');
+  });
+
   it('keeps underscores inside words and handles hard breaks', () => {
     expect(renderInline('snake_case_name and _em_')).toBe('snake_case_name and <em>em</em>');
     expect(renderInline('a  \nb')).toBe('a<br>b');
@@ -270,17 +282,22 @@ describe('documents API', () => {
   beforeAll(async () => {
     dir = mkdtempSync(path.join(tmpdir(), 'mm-notes-api-'));
     mkdirSync(path.join(dir, 'pub'));
-    mkdirSync(path.join(dir, 'priv'));
+    mkdirSync(path.join(dir, 'pub', 'priv'));
     writeFileSync(path.join(dir, 'pub', '2026-11-05-log.md'), '# Log\n\n<b>hi</b> **there**');
     writeFileSync(path.join(dir, 'pub', 'big.md'), `# Big\n${'x'.repeat(MAX_RENDER_BYTES + 10)}`);
-    writeFileSync(path.join(dir, 'priv', 'p.md'), '# Private one\n');
+    writeFileSync(path.join(dir, 'pub', 'priv', 'p.md'), '# Private one\n');
+    symlinkSync(path.join(dir, 'pub', 'priv', 'p.md'), path.join(dir, 'pub', 'alias.md'));
     const config = testConfig({
       documents: [
-        { id: 'pub', name: 'Public', path: path.join(dir, 'pub') },
-        { id: 'priv', name: 'Private', path: path.join(dir, 'priv'), private: true },
+        { id: 'pub', name: 'Public', path: path.join(dir, 'pub'), glob: '**/*.md' },
+        { id: 'priv', name: 'Private', path: path.join(dir, 'pub', 'priv'), private: true },
       ],
     });
     const db = memoryDb(config);
+    // A pre-upgrade public row can be requested directly before the first rescan.
+    db.prepare(
+      "INSERT INTO documents (id, collection_id, path, title) VALUES (77, 'pub', 'alias.md', 'Private one')",
+    ).run();
     token = createToken(db, 'reader', ['write']).token;
     running = await startServer({
       config,
@@ -304,6 +321,7 @@ describe('documents API', () => {
     });
 
   it('lists open documents and locks private collections', async () => {
+    expect((await get('/documents/77')).status).toBe(401);
     const res = await get('/documents');
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

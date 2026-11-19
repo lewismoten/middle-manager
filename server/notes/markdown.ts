@@ -42,13 +42,14 @@ export function splitFrontmatter(text: string): { meta: Frontmatter; body: strin
 /** The target if it is safe to link to, else null. */
 export function safeUrl(raw: string): string | null {
   const url = raw.trim();
-  if (/^(https?:\/\/|mailto:)/i.test(url) && !/[\s<>"']/.test(url)) return url;
-  return null;
+  // Placeholder restoration must never insert held markup into an href.
+  if (!/^(https?:\/\/|mailto:)/i.test(url) || /[\s<>"'\uE000\uE001]/.test(url)) return null;
+  return URL.canParse(url) ? url : null;
 }
 
 // ---- Inline ----
 
-const BARE_URL = /\bhttps?:\/\/[^\s<>"'`]*[^\s<>"'`.,;:!?)\]*_~]/g;
+const BARE_URL = /\bhttps?:\/\/[^\s<>"'`\uE000\uE001]*[^\s<>"'`\uE000\uE001.,;:!?)\]*_~]/g;
 
 /**
  * Renders inline markdown. Code spans and links are swapped for placeholders first so that
@@ -86,7 +87,9 @@ export function renderInline(src: string, allowLinks = true): string {
     const href = allowLinks ? safeUrl(url) : null;
     return hold(href ? link(href, escapeHtml(url)) : escapeHtml(url));
   });
-  if (allowLinks) s = s.replace(BARE_URL, (url) => hold(link(url, escapeHtml(url))));
+  if (allowLinks) {
+    s = s.replace(BARE_URL, (url) => (safeUrl(url) ? hold(link(url, escapeHtml(url))) : url));
+  }
 
   // Hard breaks: two trailing spaces or a trailing backslash.
   s = s.replace(/(?: {2,}|\\)\n/g, () => hold('<br>'));
