@@ -5,6 +5,7 @@ import { createToken, listTokens, parseScopes, revokeToken, SCOPES, TokenError }
 import { ConfigError, loadConfig } from './config.ts';
 import { dbStats, openAppDb, openDb, migrate } from './db/index.ts';
 import { reportFatal, serve } from './index.ts';
+import { IMPORT_USAGE, importCommand } from './plans/cli.ts';
 import { isMain } from './version.ts';
 
 export const USAGE = `Usage: middle-manager <command> [options]
@@ -17,6 +18,7 @@ Commands:
   token revoke <name>           Revoke the live token with this name
   db migrate                    Apply pending schema migrations
   db stats                      Show database size and row counts
+${IMPORT_USAGE}
 
 Options:
   --config <file>               Config file (default config/middle-manager.yaml, or $MM_CONFIG)
@@ -46,6 +48,11 @@ export function runCli(argv: string[], out: Out = console.log): number | Promise
       db.close();
     }
     return 0;
+  }
+
+  if (cmd === 'import') {
+    const db = openAppDb(config);
+    return importCommand(db, config, sub, args, out).finally(() => db.close());
   }
 
   const db = openAppDb(config);
