@@ -80,13 +80,15 @@ export function parseReading(
 }
 
 /**
- * Inserts readings, skipping any that repeat an existing (plan, window, read_at, machine) row,
- * so re-running a collector or re-importing a file does not duplicate history.
+ * Inserts readings, skipping any that repeat an existing (plan, window, read_at, used_pct,
+ * machine, how) row, so re-running a collector or re-importing a file does not duplicate history.
+ * That is the reference burndown's point key: two reads at the same instant on the same machine
+ * that disagree (or come from different tools) are both kept, as the reference keeps them.
  */
 export function insertReadings(db: Db, readings: NewReading[]): { added: number; skipped: number } {
   const exists = db.prepare(
     `SELECT 1 FROM plan_readings WHERE plan_id = ? AND "window" = ? AND read_at = ?
-       AND machine_id IS ? LIMIT 1`,
+       AND used_pct = ? AND machine_id IS ? AND how IS ? LIMIT 1`,
   );
   const insert = db.prepare(
     `INSERT INTO plan_readings (plan_id, "window", used_pct, resets_at, read_at, machine_id, how)
@@ -97,7 +99,7 @@ export function insertReadings(db: Db, readings: NewReading[]): { added: number;
   db.exec('BEGIN');
   try {
     for (const r of readings) {
-      if (exists.get(r.plan_id, r.window, r.read_at, r.machine_id)) {
+      if (exists.get(r.plan_id, r.window, r.read_at, r.used_pct, r.machine_id, r.how)) {
         skipped++;
         continue;
       }
