@@ -9,6 +9,7 @@ import { loadConfig } from '../server/config.ts';
 import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
 import { E2E_PORT, E2E_TOKEN } from './constants.ts';
+import { seedPlanReadings } from './seed.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -21,6 +22,8 @@ machines:
   - { id: server-1, name: "Build server", role: "agents run here" }
 plans:
   - { id: plan-a, name: "Plan A", provider: manual, windows: [weekly, five_hour] }
+  - { id: plan-b, name: "Plan B", provider: manual, empty_buffer_hours: 2 }
+  - { id: plan-c, name: "Plan C", provider: manual }
 models:
   plan-a: [small, large]
 local_models:
@@ -50,6 +53,7 @@ for (const [status, title] of Object.entries({
 db.prepare(
   "UPDATE tasks SET external_ref='hermes-kanban:sample:1',origin='hermes-kanban' WHERE title='Review queue metrics'",
 ).run();
+seedPlanReadings(db);
 const running = await startServer({ config, db });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 

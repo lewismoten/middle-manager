@@ -17,7 +17,9 @@ import {
   type WhoAmI,
 } from './api.ts';
 import { byId, h } from './dom.ts';
-import { SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './tabs.ts';
+import { SHIPPED, SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './tabs.ts';
+import { burndownPage } from './pages/burndown.ts';
+import { planGauges } from './pages/overview.ts';
 import { setupThemeToggle } from './theme.ts';
 
 let config: PublicConfig | null = null;
@@ -50,7 +52,7 @@ function sliceChip(slice: string): HTMLElement {
   const name = SLICES[slice] ?? slice;
   return h(
     'span',
-    { class: `chip slice-${slice === 'S1' ? 'now' : 'soon'}`, title: `${slice}: ${name}` },
+    { class: `chip slice-${SHIPPED.has(slice) ? 'now' : 'soon'}`, title: `${slice}: ${name}` },
     slice === 'later' ? 'later' : slice,
   );
 }
@@ -179,7 +181,7 @@ function renderPage(tab: Tab, focus: boolean): void {
     if (focus) head.focus({ preventScroll: true });
     return;
   }
-  const arrives = [...new Set(tab.coming.map((c) => c.slice))].filter((s) => s !== 'S1');
+  const arrives = [...new Set(tab.coming.map((c) => c.slice))].filter((s) => !SHIPPED.has(s));
   const head = h(
     'div',
     { class: 'page-head' },
@@ -188,7 +190,7 @@ function renderPage(tab: Tab, focus: boolean): void {
       ? h(
           'p',
           { class: 'arrives' },
-          tab.coming.some((c) => c.slice === 'S1') ? 'More arrives in ' : 'Arrives in ',
+          tab.coming.some((c) => SHIPPED.has(c.slice)) ? 'More arrives in ' : 'Arrives in ',
           ...arrives.flatMap((s, i) => [
             i ? ', ' : '',
             h('b', {}, s === 'later' ? 'a later slice' : `${s} · ${SLICES[s] ?? ''}`),
@@ -217,7 +219,9 @@ function renderPage(tab: Tab, focus: boolean): void {
     ),
     h('div', { class: 'side' }, h('p', { class: 'lead' }, tab.lead), coming, fromConfig(tab)),
   );
-  main.replaceChildren(head, empty);
+  if (tab.id === 'burndown') main.replaceChildren(head, burndownPage(config?.site.timezone));
+  else if (tab.id === 'overview') main.replaceChildren(head, planGauges(), empty);
+  else main.replaceChildren(head, empty);
   if (tab.id === 'settings') {
     void settingsLive().then((box) => empty.querySelector('.side')?.append(box));
   }

@@ -37,12 +37,35 @@ for (const tab of TABS) {
     await expect(page.locator('h1#page-title')).toHaveText(tab.title);
     await expect(page.locator('#site-name')).toHaveText('Test fleet');
     await expect(page.locator(`.tabs a[aria-current="page"]`)).toHaveText(tab.label);
-    if (tab.id !== 'board') await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
-    if (tab.id === 'settings')
-      await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
-    else if (tab.id === 'board')
+    if (tab.id === 'burndown') {
+      // Populated from e2e/seed.ts: Plan A has a live week, past weeks and a 5-hour window.
+      await expect(page.locator('.weekly svg[role="img"]')).toBeVisible();
+      await expect(page.locator('.weekly .used')).toHaveCount(1);
+      await expect(page.locator('.weekly .even')).toHaveCount(1);
+      await expect(page.locator('.weekly .proj')).toHaveCount(1);
+      await expect(page.locator('.weekly .now')).toHaveCount(1);
+      await expect(page.locator('.weekly .target')).toHaveCount(1);
+      await expect(page.locator('.five-hour svg[role="img"]')).toBeVisible();
+      await expect(page.locator('.past-weeks tbody tr')).toHaveCount(2);
+      await expect(page.locator('table.pacing tbody tr')).toHaveCount(3);
+      await expect(page.locator('table.pacing tr[data-plan="plan-b"] .stale')).toBeVisible();
+    } else if (tab.id === 'board') {
       await expect(page.getByRole('button', { name: /Review queue metrics/ })).toBeVisible();
-    else await expect(page.locator('.box h3', { hasText: 'From your config' })).toBeVisible();
+    } else {
+      await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
+      if (tab.id === 'settings')
+        await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
+      else await expect(page.locator('.box h3', { hasText: 'From your config' })).toBeVisible();
+    }
+    if (tab.id === 'overview') {
+      await expect(page.locator('.plan-gauge')).toHaveCount(3);
+      await expect(page.locator('.plan-gauge[data-plan="plan-a"] .mode')).toHaveText(
+        /burn|steady|conserve|stop/,
+      );
+      await expect(page.locator('.plan-gauge[data-plan="plan-a"] svg.gauge')).toBeVisible();
+      await expect(page.locator('.plan-gauge[data-plan="plan-b"] .stale')).toContainText('stale');
+      await expect(page.locator('.plan-gauge[data-plan="plan-c"]')).toContainText('No readings');
+    }
 
     const fontsLoaded = await page.evaluate(async () => {
       await document.fonts.ready;

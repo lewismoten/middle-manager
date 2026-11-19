@@ -18,6 +18,9 @@ export interface Tab {
   skeleton: Skeleton;
 }
 
+/** Slices merged into this build; their items show as here now. */
+export const SHIPPED = new Set(['S1', 'S2']);
+
 export const SLICES: Record<string, string> = {
   S1: 'foundation',
   S2: 'plans & burndown',

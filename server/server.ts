@@ -9,6 +9,7 @@ import { openAppDb, type Db } from './db/index.ts';
 import { createApp, type AppState, type Route } from './http/app.ts';
 import { scheduleRetention } from './retention.ts';
 import { coreRoutes } from './routes/core.ts';
+import { planRoutes } from './plans/routes.ts';
 import { ROOT_DIR, VERSION } from './version.ts';
 
 export const DEFAULT_WEB_ROOT = path.join(ROOT_DIR, 'dist', 'web');
@@ -41,7 +42,12 @@ export async function startServer(opts: StartOptions): Promise<Running> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const db = opts.db ?? openAppDb(opts.config);
   const state = buildState(opts.config, db, opts.webRoot);
-  const handler = createApp(state, [...coreRoutes, ...boardRoutes, ...(opts.extraRoutes ?? [])]);
+  const handler = createApp(state, [
+    ...coreRoutes,
+    ...boardRoutes,
+    ...planRoutes,
+    ...(opts.extraRoutes ?? []),
+  ]);
   const server = createServer((req, res) => void handler(req, res));
 
   const stopRetention =
