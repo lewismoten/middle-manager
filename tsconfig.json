@@ -4,5 +4,13 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["server", "test", "scripts", "bin", "vite.config.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": [
+    "server",
+    "test",
+    "scripts",
+    "bin",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "eslint.config.js"
+  ]
 }
