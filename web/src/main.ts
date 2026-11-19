@@ -16,6 +16,7 @@ import {
   type WhoAmI,
 } from './api.ts';
 import { byId, h } from './dom.ts';
+import { mountAgents } from './pages/agents.ts';
 import { SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './tabs.ts';
 import { setupThemeToggle } from './theme.ts';
 
@@ -164,7 +165,20 @@ async function settingsLive(): Promise<HTMLElement> {
   return box;
 }
 
+/** Pages that are built replace the empty state; each returns a cleanup for timers. */
+let leavePage: (() => void) | null = null;
+const LIVE_PAGES: Record<string, typeof mountAgents> = { agents: mountAgents };
+
 function renderPage(tab: Tab, focus: boolean): void {
+  leavePage?.();
+  leavePage = null;
+  const live = LIVE_PAGES[tab.id];
+  if (live) {
+    leavePage = live(main, { config, title: tab.title });
+    document.title = `${tab.title} · ${config?.site.name ?? 'middle-manager'}`;
+    if (focus) byId('page-title').focus({ preventScroll: true });
+    return;
+  }
   const arrives = [...new Set(tab.coming.map((c) => c.slice))].filter((s) => s !== 'S1');
   const head = h(
     'div',

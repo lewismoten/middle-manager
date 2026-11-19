@@ -9,6 +9,7 @@ import { loadConfig } from '../server/config.ts';
 import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
 import { E2E_PORT, E2E_TOKEN } from './constants.ts';
+import { seedAgents } from './fixtures/agents.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -38,7 +39,9 @@ collectors:
 const config = loadConfig(configFile);
 const db = openAppDb(config);
 createToken(db, 'e2e', ['write'], new Date(), E2E_TOKEN);
-const running = await startServer({ config, db });
+seedAgents(db);
+// Collectors would scan this host's real processes; the smoke tests use seeded runs only.
+const running = await startServer({ config, db, agentCollectors: false });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 
 let done = false;

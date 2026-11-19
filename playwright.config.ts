@@ -22,7 +22,7 @@ export default defineConfig({
     ...widths.flatMap((width) =>
       schemes.map((colorScheme) => ({
         name: `${width}-${colorScheme}`,
-        testMatch: 'smoke.spec.ts',
+        testMatch: /smoke\.spec\.ts$/, // smoke.spec.ts plus <page>.smoke.spec.ts
         use: { viewport: { width, height: heightFor(width) }, colorScheme },
       })),
     ),
