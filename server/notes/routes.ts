@@ -9,6 +9,7 @@ import {
   getDocumentRow,
   listDocuments,
   readDocument,
+  privateRoots,
 } from './documents.ts';
 
 const PRIVATE_MESSAGE = 'This collection is private; sign in with a token';
@@ -55,11 +56,20 @@ export const noteRoutes: Route[] = [
       const row = getDocumentRow(state.db, Number(params.id));
       const col = row && state.config.documents.find((d) => d.id === row.collection_id);
       if (!row || !col) throw new HttpError(404, 'not_found', `No document ${params.id}`);
-      if (col.private && !token) throw new HttpError(401, 'unauthorized', PRIVATE_MESSAGE);
+      if ((col.private || row.private) && !token)
+        throw new HttpError(401, 'unauthorized', PRIVATE_MESSAGE);
       try {
-        return { ...readDocument(row, col), collection_name: col.name };
+        return {
+          ...readDocument(row, col, token ? [] : privateRoots(state.config)),
+          collection_name: col.name,
+        };
       } catch (err) {
-        if (err instanceof DocumentReadError) throw new HttpError(err.status, 'gone', err.message);
+        if (err instanceof DocumentReadError)
+          throw new HttpError(
+            err.status,
+            err.status === 401 ? 'unauthorized' : 'gone',
+            err.message,
+          );
         throw err;
       }
     },

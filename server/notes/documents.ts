@@ -159,16 +159,30 @@ interface Found {
 
 function isInside(root: string, p: string): boolean {
   const rel = path.relative(root, p);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
+export function privateRoots(config: Config): string[] {
+  return config.documents
+    .filter((col) => col.private)
+    .map((col) => {
+      const root = collectionRoot(col);
+      try {
+        return realpathSync(root);
+      } catch {
+        return root;
+      }
+    });
 }
 
 /** Files under root whose relative path matches the glob. Skips dot folders and escapes. */
-export function findFiles(root: string, glob: string): Found[] {
+export function findFiles(root: string, glob: string, excluded: string[] = []): Found[] {
   const re = globToRegExp(glob);
   const deep = glob.includes('/');
   const realRoot = realpathSync(root);
   const out: Found[] = [];
   const walk = (dir: string, rel: string, depth: number) => {
+    if (excluded.some((root) => isInside(root, dir))) return;
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -186,7 +200,8 @@ export function findFiles(root: string, glob: string): Found[] {
       if (!(e.isFile() || e.isSymbolicLink()) || !re.test(r)) continue;
       try {
         // A symlink must point at a regular file inside the collection folder.
-        if (e.isSymbolicLink() && !isInside(realRoot, realpathSync(abs))) continue;
+        const real = e.isSymbolicLink() ? realpathSync(abs) : abs;
+        if (!isInside(realRoot, real) || excluded.some((root) => isInside(root, real))) continue;
         const st = statSync(abs);
         if (!st.isFile()) continue;
         out.push({ rel: r, abs, size: st.size, mtime: st.mtime });
@@ -205,6 +220,7 @@ export function indexCollection(
   col: DocumentCollectionConfig,
   timeZone: string,
   now = new Date(),
+  excluded: string[] = [],
 ): ScanResult {
   const result: ScanResult = {
     collection: col.id,
@@ -221,7 +237,7 @@ export function indexCollection(
   let found: Found[];
   try {
     if (!statSync(root).isDirectory()) throw Object.assign(new Error(), { code: 'ENOTDIR' });
-    found = findFiles(root, col.glob);
+    found = findFiles(root, col.glob, excluded);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     result.ok = false;
@@ -328,7 +344,10 @@ export function ensureIndexed(
     if (opts.only && col.id !== opts.only) continue;
     const last = scans.get(col.id);
     if (!opts.force && last && now.getTime() - Date.parse(last.at) < RESCAN_MS) continue;
-    scans.set(col.id, indexCollection(db, col, config.site.timezone, now));
+    scans.set(
+      col.id,
+      indexCollection(db, col, config.site.timezone, now, col.private ? [] : privateRoots(config)),
+    );
   }
   return scans;
 }
@@ -381,12 +400,17 @@ export interface ListOptions {
 /** Collections (with lock state) and documents newest first, filtered by collection and title. */
 export function listDocuments(db: Db, config: Config, opts: ListOptions) {
   const scans = scansFor(db);
-  const open = config.documents.filter((d) => opts.signedIn || !d.private);
+  // A failed scan can leave rows indexed under an older privacy configuration.
+  const open = config.documents.filter(
+    (d) => opts.signedIn || (!d.private && scans.get(d.id)?.ok !== false),
+  );
   const counts = new Map(
     (
       db
-        .prepare('SELECT collection_id AS id, COUNT(*) AS n FROM documents GROUP BY collection_id')
-        .all() as { id: string; n: number }[]
+        .prepare(
+          'SELECT collection_id AS id, COUNT(*) AS n FROM documents WHERE private = 0 OR ? GROUP BY collection_id',
+        )
+        .all(Number(opts.signedIn)) as { id: string; n: number }[]
     ).map((r) => [r.id, Number(r.n)]),
   );
   const collections: CollectionView[] = config.documents.map((d) => {
@@ -397,7 +421,7 @@ export function listDocuments(db: Db, config: Config, opts: ListOptions) {
       name: d.name,
       private: d.private,
       locked,
-      count: locked ? null : (counts.get(d.id) ?? 0),
+      count: locked ? null : opts.signedIn || s?.ok ? (counts.get(d.id) ?? 0) : 0,
       indexed_at: locked ? null : (s?.at ?? null),
       error: locked ? null : (s?.error ?? null),
       capped: locked ? false : (s?.capped ?? false),
@@ -410,6 +434,7 @@ export function listDocuments(db: Db, config: Config, opts: ListOptions) {
   let total = 0;
   if (ids.length) {
     const where = [`collection_id IN (${ids.map(() => '?').join(',')})`];
+    if (!opts.signedIn) where.push('private = 0');
     const args: (string | number)[] = [...ids];
     const q = opts.q?.trim();
     if (q) {
@@ -450,7 +475,11 @@ export class DocumentReadError extends Error {
 }
 
 /** Reads a document from disk (inside its collection folder only) and renders it. */
-export function readDocument(row: DocumentRow, col: DocumentCollectionConfig) {
+export function readDocument(
+  row: DocumentRow,
+  col: DocumentCollectionConfig,
+  excluded: string[] = [],
+) {
   const root = collectionRoot(col);
   let realRoot: string;
   let real: string;
@@ -460,6 +489,12 @@ export function readDocument(row: DocumentRow, col: DocumentCollectionConfig) {
   } catch {
     throw new DocumentReadError(404, 'The file is no longer there');
   }
+  if (
+    excluded.some(
+      (root) => isInside(root, real) || isInside(root, path.resolve(realRoot, row.path)),
+    )
+  )
+    throw new DocumentReadError(401, 'This document is private; sign in with a token');
   if (!isInside(realRoot, real)) throw new DocumentReadError(404, 'The file is no longer there');
   let st;
   try {
