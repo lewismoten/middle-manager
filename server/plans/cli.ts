@@ -1,12 +1,19 @@
-// `middle-manager import <collector>`: run one plan collector now.
+// `middle-manager import <collector>`: run one collector now.
 //   import <plan-id>                            anthropic-oauth / codex-sessions plans
 //   import <plan-id> --used 42 [--resets-at ISO] [--window weekly] [--at ISO]   manual reading
 //   import csv-import --file readings.csv [--map claude=my-plan,codex=other]
 //   import <csv-collector-id>                   a configured collector of kind csv-import
+//   import <collector-id>                       any other configured collector (board, agents,
+//                                               schedule mirrors), through runCollectorById
 
 import { flagString, type Args } from '../args.ts';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
+import {
+  runCollectorById,
+  runnableCollectors,
+  type CollectorHooks,
+} from '../schedules/collectors.ts';
 import { CollectorError } from './collectors.ts';
 import {
   CollectorInputError,
@@ -16,8 +23,8 @@ import {
   type CollectorInput,
 } from './service.ts';
 
-export const IMPORT_USAGE = `  import <collector> [options]  Run one plan collector now. <collector> is a plan id,
-                                csv-import, or a configured csv-import collector
+export const IMPORT_USAGE = `  import <collector> [options]  Run one collector now. <collector> is a plan id,
+                                csv-import, or any configured collector id
       --file <csv>              CSV of time,source,machine,window,used_pct,resets_at,how
       --map src=plan,...        Map CSV sources to plan ids
       --used <pct> [--resets-at <iso>] [--window weekly|five_hour] [--at <iso>]
@@ -41,17 +48,28 @@ export async function importCommand(
   id: string | undefined,
   args: Args,
   out: (line: string) => void,
+  hooks: CollectorHooks = {},
 ): Promise<number> {
+  const ids = [
+    ...new Set([...planCollectorIds(config), ...runnableCollectors(config).map((c) => c.id)]),
+  ];
   if (!id) {
-    out(
-      `Usage: middle-manager import <collector>\nCollectors: ${planCollectorIds(config).join(', ')}`,
-    );
+    out(`Usage: middle-manager import <collector>\nCollectors: ${ids.join(', ')}`);
     return 2;
   }
   const target = resolveCollector(config, id);
   if (!target) {
-    out(`No plan collector "${id}". Collectors: ${planCollectorIds(config).join(', ')}`);
-    return 2;
+    if (!ids.includes(id)) {
+      out(`No collector "${id}". Collectors: ${ids.join(', ')}`);
+      return 2;
+    }
+    try {
+      out(JSON.stringify(await runCollectorById(db, config, id, hooks)));
+      return 0;
+    } catch (err) {
+      out(`${id}: ${(err as Error).message}`);
+      return 1;
+    }
   }
   const input: CollectorInput = {
     file: flagString(args, 'file'),

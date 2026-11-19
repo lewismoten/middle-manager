@@ -1,11 +1,14 @@
 // Schedules API (SPEC 6): GET/POST /jobs, GET/PATCH/DELETE /jobs/:id, POST /jobs/:id/run,
-// GET /jobs/:id/runs, GET /jobs/preview, GET /external-jobs, POST /external-jobs/refresh.
+// GET /jobs/:id/runs, GET /jobs/preview, GET /external-jobs, POST /external-jobs/refresh,
+// POST /collectors/:id/run (any runnable collector: plans, board, agents, mirrors).
 // Creating, editing or deleting a shell job needs the jobs:shell scope (SPEC 9); so does turning
 // a collector job into a shell job. Running an existing job needs only `write`.
 
 import type { TokenInfo } from '../auth.ts';
 import { HttpError, readJson, sendJson, type Ctx, type Route } from '../http/app.ts';
-import { runnableCollectors } from './collectors.ts';
+import { CollectorError } from '../plans/collectors.ts';
+import { CollectorInputError } from '../plans/service.ts';
+import { runCollectorById, runnableCollectors, UnknownCollectorError } from './collectors.ts';
 import { checkSchedule } from './cron.ts';
 import {
   deleteJob,
@@ -168,5 +171,23 @@ export const scheduleRoutes: Route[] = [
     path: '/external-jobs/refresh',
     handler: async ({ state, res }) =>
       sendJson(res, 200, { collectors: await runMirrors(state.db, state.config) }),
+  },
+  {
+    method: 'POST',
+    path: '/collectors/:id/run',
+    handler: async ({ state, params }) => {
+      const id = params.id ?? '';
+      try {
+        return await runCollectorById(state.db, state.config, id, state.collectorHooks);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        if (err instanceof UnknownCollectorError)
+          throw new HttpError(404, 'not_found', err.message);
+        if (err instanceof CollectorInputError)
+          throw new HttpError(400, 'bad_request', err.message);
+        const msg = err instanceof CollectorError ? err.message : (err as Error).message;
+        throw new HttpError(502, 'collector_failed', `${id}: ${msg}`);
+      }
+    },
   },
 ];

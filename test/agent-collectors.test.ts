@@ -13,11 +13,13 @@ import {
   parseProcStat,
   parsePs,
   redactSecrets,
+  shellWords,
   type GitInfo,
   type ProcInfo,
 } from '../server/agents/process-scan.ts';
 import { listRuns, startRun } from '../server/agents/runs.ts';
 import {
+  discoverUnits,
   parseExecStart,
   parseShow,
   parseSystemdTime,
@@ -217,12 +219,17 @@ describe('systemd-workers', () => {
 });
 
 describe('collectors end to end (fake host)', () => {
+  // Session folders the scans look in for a missing model: empty, never the host's own.
+  const sessions = mkdtempSync(path.join(tmpdir(), 'mm-scan-sessions-'));
+  afterAll(() => rmSync(sessions, { recursive: true, force: true }));
+  const dirs = { claude_dir: sessions, codex_dir: sessions };
+
   it('merges units and processes into one run per pid, then ends what vanished', async () => {
     const config = testConfig({
       machines: [{ id: 'server-1', name: 'S' }],
       collectors: [
-        { id: 'procs', kind: 'process-scan', match: ['codex exec', 'claude -p'] },
-        { id: 'workers', kind: 'systemd-workers', prefix: 'worker-' },
+        { id: 'procs', kind: 'process-scan', match: ['codex exec', 'claude -p'], ...dirs },
+        { id: 'workers', kind: 'systemd-workers', prefix: 'worker-', ...dirs },
         { id: 'boards', kind: 'hermes-kanban' },
       ],
     });
@@ -441,5 +448,122 @@ describe('token readers', () => {
       log_ref: expect.stringMatching(/^codex:/),
     });
     expect(runs.find((x) => x.id === theirs.id)?.tokens_out).toBeNull();
+  });
+});
+
+describe('model from argv, then from the session log', () => {
+  // A worker unit as systemd prints its ExecStart: nested bash -c, spaces escaped with "\".
+  const UNIT_CMD = String.raw`/bin/bash -c exec bash -c cd\ web\ \&\&\ npm\ ci\ \>\ ../npm.log\ 2\>\&1\;\ cd\ ..\ \&\&\ /opt/node/bin/codex\ exec\ -m\ gpt-test-large\ -s\ workspace-write\ -c\ sandbox_workspace_write.network_access=true\ \"\$\(cat\ /work/brief.txt\)\"`;
+
+  it('splits shell words with quotes, escapes and operators', () => {
+    expect(shellWords(String.raw`a\ b "c \"d\"" 'e f' g;h&&i 2>&1`)).toEqual([
+      'a b',
+      'c "d"',
+      'e f',
+      'g',
+      ';',
+      'h',
+      '&&',
+      'i',
+      '2>',
+      '&',
+      '1',
+    ]);
+    expect(shellWords(`x '' y`)).toEqual(['x', '', 'y']);
+  });
+
+  it('reads -m from a codex exec inside an escaped systemd ExecStart', () => {
+    expect(argvDetails(shellWords(UNIT_CMD))).toMatchObject({ model: 'gpt-test-large' });
+  });
+
+  it('reads the model through a bash -c wrapper in a process argv', () => {
+    const argv = ['/bin/bash', '-c', 'npm ci > /dev/null 2>&1; claude -p --model opus "$(cat b)"'];
+    expect(argvDetails(argv).model).toBe('opus');
+    expect(argvDetails(['bash', '-lc', 'codex exec --model=gpt-y "ship it"'])).toEqual({
+      model: 'gpt-y',
+      prompt: 'ship it',
+    });
+  });
+
+  it("reads codex config overrides and ignores other commands' -m", () => {
+    expect(argvDetails(['codex', 'exec', '-c', 'model="gpt-z"', 'go']).model).toBe('gpt-z');
+    expect(argvDetails(['codex', 'exec', '--config', 'model=gpt-z', 'go']).model).toBe('gpt-z');
+    expect(argvDetails(['codex', 'exec', '-c', 'sandbox=x', 'go']).model).toBeNull();
+    expect(argvDetails(['sh', '-c', 'git commit -m wip && codex exec "review it"'])).toEqual({
+      model: null,
+      prompt: 'review it',
+    });
+  });
+
+  it('a systemd worker run gets its model from argv', async () => {
+    const units = parseShow(
+      `Id=worker-c.service\nActiveState=active\nMainPID=700\nWorkingDirectory=/work/repo\nExecStart={ path=/bin/bash ; argv[]=${UNIT_CMD} ; ignore_errors=no }\n`,
+    );
+    const [d] = await discoverUnits(units, {}, noGit, () => null);
+    expect(d).toMatchObject({ agent_kind: 'codex', model: 'gpt-test-large' });
+  });
+
+  it('fills a missing model from the Codex turn context and Claude messages', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'mm-model-'));
+    try {
+      const codexDir = path.join(root, 'codex');
+      const claudeDir = path.join(root, 'claude');
+      const id = '0000bbbb-1111-2222-3333-444455556666';
+      const day = path.join(codexDir, '2026', '11', '19');
+      mkdirSync(day, { recursive: true });
+      const line = (o: unknown) => JSON.stringify(o) + '\n';
+      writeFileSync(
+        path.join(day, `rollout-2026-11-19T12-00-00-${id}.jsonl`),
+        line({ type: 'session_meta', payload: { id, cwd: '/work/codex', timestamp: T0 } }) +
+          // Newer logs: the model under collaboration_mode.settings only.
+          line({
+            type: 'turn_context',
+            payload: { cwd: '/work/codex', collaboration_mode: { settings: { model: 'gpt-log' } } },
+          }),
+      );
+      const proj = path.join(claudeDir, claudeProjectDir('/work/claude'));
+      mkdirSync(proj, { recursive: true });
+      writeFileSync(
+        path.join(proj, 'sess-9.jsonl'),
+        line({ type: 'assistant', message: { id: 'm1', model: 'claude-log', usage: {} } }),
+      );
+      const config = testConfig({
+        machines: [{ id: 'server-1', name: 'S' }],
+        collectors: [
+          {
+            id: 'procs',
+            kind: 'process-scan',
+            match: ['codex exec', 'claude -p'],
+            codex_dir: codexDir,
+            claude_dir: claudeDir,
+          },
+        ],
+      });
+      const db = memoryDb(config);
+      const procs = [
+        proc(801, 1, 'codex exec "no model flag"', { cwd: '/work/codex' }),
+        proc(802, 1, 'claude -p hello', { cwd: '/work/claude' }),
+      ];
+      procs[0]!.argv = ['codex', 'exec', 'no model flag'];
+      const env: CollectorEnv = {
+        listProcesses: async () => procs,
+        listUnits: async () => [],
+        git: async (cwd) => ({ branch: null, origin: null, worktree: cwd }),
+        tail: new SessionTail(),
+        now: () => new Date('2026-11-19T12:05:00.000Z'),
+      };
+      const [r] = await runAgentCollectors(db, config, env);
+      expect(r).toMatchObject({ ok: true, inserted: 2, models_filled: 2 });
+      const runs = listRuns(db, {});
+      expect(runs.find((x) => x.pid === 801)).toMatchObject({
+        model: 'gpt-log',
+        log_ref: `codex:${id}`,
+      });
+      expect(runs.find((x) => x.pid === 802)).toMatchObject({ model: 'claude-log' });
+      // Argv wins over the log; a run that already has a model is not looked up again.
+      expect((await runAgentCollectors(db, config, env))[0]).toMatchObject({ models_filled: 0 });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

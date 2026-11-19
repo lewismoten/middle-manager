@@ -130,6 +130,12 @@ by another matched agent becomes its sub-agent. When a process is gone, its run 
 main pid and working directory. A failed unit's run is marked `failed`; a unit that disappears is
 marked `ended`.
 
+Both read the model from the agent's own flags: `-m`/`--model`/`--model=` (and Codex
+`-c model=...`), looking inside `bash -c` wrappers and systemd's escaped command lines. When the
+command line names no model, they take it from the run's session log (Codex `turn_context`,
+Claude Code assistant messages), using the same `claude_dir`/`codex_dir` options as
+`session-tokens`.
+
 **session-tokens** sums token usage for open runs (and runs that ended in the last 15 minutes)
 from the harness's own session logs on this host:
 

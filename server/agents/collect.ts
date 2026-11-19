@@ -1,6 +1,7 @@
 // Runs the agent collectors configured in config.collectors:
 //   - { id, kind: process-scan, match: ["codex exec", "claude -p"], every_s?, machine? }
 //   - { id, kind: systemd-workers, prefix: "worker-", every_s?, machine?, agent_kind? }
+//     (both also take claude_dir?/codex_dir? to fill a model argv did not name)
 //   - { id, kind: session-tokens, claude_dir?, codex_dir?, every_s?, machine? }
 // They run on the machine that hosts the service, every `every_s` seconds (default 30), and on
 // demand through POST /runs/scan.
@@ -39,6 +40,8 @@ export interface CollectorReport {
   updated?: number;
   ended?: number;
   tokens_updated?: number;
+  /** Runs whose model came from their session log because argv did not name one. */
+  models_filled?: number;
 }
 
 /** Hooks so tests can run collectors without touching the real host. */
@@ -105,6 +108,7 @@ export async function runCollector(
         updated: r.updated,
         ended: endVanishedPids(db, machine, alive, now),
       });
+      report.models_filled = fillMissingModels(db, config, c, machine, env, now);
     } else if (c.kind === 'systemd-workers') {
       const prefix = typeof c.prefix === 'string' && c.prefix ? c.prefix : 'worker-';
       const kind =
@@ -118,6 +122,7 @@ export async function runCollector(
       const listed = new Set(units.map((u) => u.unit));
       const ended = endVanishedUnits(db, machine, prefix, listed, now);
       Object.assign(report, { inserted: r.inserted, updated: r.updated, ended });
+      report.models_filled = fillMissingModels(db, config, c, machine, env, now);
     } else if (c.kind === 'session-tokens') {
       report.tokens_updated = readSessionTokens(db, machine, readerDirs(config, c), env.tail, now);
     } else {
@@ -130,6 +135,24 @@ export async function runCollector(
   return report;
 }
 
+/**
+ * A run's model when argv did not name one: the model its session log reports (Codex
+ * turn_context, Claude Code assistant messages). Runs without a model are looked up after every
+ * process-scan and systemd-workers pass, so this works without a session-tokens collector.
+ */
+function fillMissingModels(
+  db: Db,
+  config: Config,
+  c: CollectorConfig,
+  machine: string,
+  env: CollectorEnv,
+  now: Date,
+): number {
+  return readSessionTokens(db, machine, readerDirs(config, c), env.tail, now, {
+    missingModel: true,
+  });
+}
+
 /** Refreshes tokens for open runs (and runs that ended in the last 15 minutes) on this machine. */
 export function readSessionTokens(
   db: Db,
@@ -137,12 +160,13 @@ export function readSessionTokens(
   dirs: ReaderDirs,
   tail: SessionTail,
   now = new Date(),
+  opts: { missingModel?: boolean } = {},
 ): number {
   const since = new Date(now.getTime() - 15 * 60_000).toISOString();
   const runs = db
     .prepare(
       `SELECT * FROM runs WHERE machine_id = ? AND (ended_at IS NULL OR ended_at >= ?)
-       AND agent_kind IN ('claude-code', 'codex')`,
+       AND agent_kind IN ('claude-code', 'codex')${opts.missingModel ? ' AND model IS NULL' : ''}`,
     )
     .all(machine, since) as unknown as RunRow[];
   let n = 0;

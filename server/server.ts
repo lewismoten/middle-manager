@@ -14,6 +14,7 @@ import { scheduleAgentCollectors } from './agents/collect.ts';
 import { runRoutes } from './agents/routes.ts';
 import { scheduleMirrors } from './schedules/mirror.ts';
 import { scheduleRoutes } from './schedules/routes.ts';
+import type { CollectorHooks } from './schedules/collectors.ts';
 import { noteRoutes } from './notes/routes.ts';
 import { connectionRoutes } from './connections/routes.ts';
 import { forgetScheduler, schedulerFor } from './schedules/scheduler.ts';
@@ -36,6 +37,8 @@ export interface StartOptions {
   /** Run job timers and the Hermes cron / systemd timer mirror. Default true. */
   schedules?: boolean;
   log?: (msg: string) => void;
+  /** Host access for POST /collectors/:id/run (tests). */
+  collectorHooks?: CollectorHooks;
 }
 
 export interface Running {
@@ -53,6 +56,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const db = opts.db ?? openAppDb(opts.config);
   const state = buildState(opts.config, db, opts.webRoot);
+  if (opts.collectorHooks) state.collectorHooks = opts.collectorHooks;
   const handler = createApp(state, [
     ...coreRoutes,
     ...boardRoutes,
