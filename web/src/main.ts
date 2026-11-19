@@ -20,6 +20,7 @@ import { byId, h } from './dom.ts';
 import { SHIPPED, SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './tabs.ts';
 import { burndownPage } from './pages/burndown.ts';
 import { planGauges } from './pages/overview.ts';
+import { mountAgents } from './pages/agents.ts';
 import { setupThemeToggle } from './theme.ts';
 
 let config: PublicConfig | null = null;
@@ -167,7 +168,20 @@ async function settingsLive(): Promise<HTMLElement> {
   return box;
 }
 
+/** Pages that are built replace the empty state; each returns a cleanup for timers. */
+let leavePage: (() => void) | null = null;
+const LIVE_PAGES: Record<string, typeof mountAgents> = { agents: mountAgents };
+
 function renderPage(tab: Tab, focus: boolean): void {
+  leavePage?.();
+  leavePage = null;
+  const live = LIVE_PAGES[tab.id];
+  if (live) {
+    leavePage = live(main, { config, title: tab.title });
+    document.title = `${tab.title} · ${config?.site.name ?? 'middle-manager'}`;
+    if (focus) byId('page-title').focus({ preventScroll: true });
+    return;
+  }
   if (tab.id === 'board') {
     const head = h('h1', { id: 'page-title', tabindex: '-1' }, tab.title);
     main.replaceChildren(

@@ -12,6 +12,9 @@ import {
 } from '../server/db/index.ts';
 import { memoryDb, testConfig } from './helpers.ts';
 
+// Slices add numbered migrations; tests follow the folder instead of naming each one.
+const SHIPPED = readMigrations();
+
 function tables(db: ReturnType<typeof openDb>): string[] {
   return (
     db
@@ -25,7 +28,7 @@ function tables(db: ReturnType<typeof openDb>): string[] {
 describe('migrations', () => {
   it('creates every SPEC section 5 table', () => {
     const db = openDb(':memory:');
-    expect(migrate(db)).toEqual([1]);
+    expect(migrate(db)).toEqual(SHIPPED.map((m) => m.version));
     expect(tables(db)).toEqual([...COUNTED_TABLES, 'schema_migrations'].sort());
   });
 
@@ -34,7 +37,8 @@ describe('migrations', () => {
     migrate(db);
     expect(migrate(db)).toEqual([]);
     const rows = db.prepare('SELECT version, name FROM schema_migrations').all();
-    expect(rows).toEqual([{ version: 1, name: '0001_initial.sql' }]);
+    expect(rows).toEqual(SHIPPED.map(({ version, name }) => ({ version, name })));
+    expect(rows[0]).toEqual({ version: 1, name: '0001_initial.sql' });
   });
 
   it('applies only new migrations, in order', () => {
@@ -92,7 +96,7 @@ describe('migrations', () => {
     const db = memoryDb();
     const s = dbStats(db, ':memory:');
     expect(Object.keys(s.rows)).toEqual([...COUNTED_TABLES]);
-    expect(s.schema_version).toBe(1);
+    expect(s.schema_version).toBe(Math.max(...SHIPPED.map((m) => m.version)));
     expect(s.page_size).toBeGreaterThan(0);
   });
 });

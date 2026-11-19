@@ -30,7 +30,10 @@ async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
-for (const tab of TABS) {
+// Pages that are built have their own <page>.smoke.spec.ts.
+const BUILT = new Set(['agents']);
+
+for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
   test(`${tab.id} renders without overflow or errors`, async ({ page, baseURL }, info) => {
     const problems = watch(page, baseURL as string);
     await page.goto(`/#/${tab.id}`);

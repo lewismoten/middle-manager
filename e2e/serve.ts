@@ -10,6 +10,7 @@ import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
 import { E2E_PORT, E2E_TOKEN } from './constants.ts';
 import { seedPlanReadings } from './seed.ts';
+import { seedAgents } from './fixtures/agents.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
@@ -54,7 +55,9 @@ db.prepare(
   "UPDATE tasks SET external_ref='hermes-kanban:sample:1',origin='hermes-kanban' WHERE title='Review queue metrics'",
 ).run();
 seedPlanReadings(db);
-const running = await startServer({ config, db });
+seedAgents(db);
+// Collectors would scan this host's real processes; the smoke tests use seeded runs only.
+const running = await startServer({ config, db, agentCollectors: false });
 console.log(`e2e server on ${running.url} (temp dir ${dir})`);
 
 let done = false;

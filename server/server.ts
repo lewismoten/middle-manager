@@ -10,6 +10,8 @@ import { createApp, type AppState, type Route } from './http/app.ts';
 import { scheduleRetention } from './retention.ts';
 import { coreRoutes } from './routes/core.ts';
 import { planRoutes } from './plans/routes.ts';
+import { scheduleAgentCollectors } from './agents/collect.ts';
+import { runRoutes } from './agents/routes.ts';
 import { ROOT_DIR, VERSION } from './version.ts';
 
 export const DEFAULT_WEB_ROOT = path.join(ROOT_DIR, 'dist', 'web');
@@ -24,6 +26,8 @@ export interface StartOptions {
   extraRoutes?: Route[];
   /** Run the retention job at start and daily. Default true. */
   retention?: boolean;
+  /** Run the agent collectors (process-scan, systemd-workers, session-tokens). Default true. */
+  agentCollectors?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -46,6 +50,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     ...coreRoutes,
     ...boardRoutes,
     ...planRoutes,
+    ...runRoutes,
     ...(opts.extraRoutes ?? []),
   ]);
   const server = createServer((req, res) => void handler(req, res));
@@ -63,6 +68,11 @@ export async function startServer(opts: StartOptions): Promise<Running> {
           },
           (err) => console.error('retention failed:', err),
         );
+
+  const stopAgents =
+    opts.agentCollectors === false
+      ? () => {}
+      : scheduleAgentCollectors(db, opts.config, (msg) => console.error(msg));
 
   const host = opts.host ?? opts.config.server.host;
   const port = opts.port ?? opts.config.server.port;
@@ -82,6 +92,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     if (closed) return;
     closed = true;
     stopRetention();
+    stopAgents();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();

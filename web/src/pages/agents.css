@@ -1,0 +1,316 @@
+/* Agents page. Uses the shared color tokens from styles.css. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#agents-refresh {
+  margin-left: auto;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: end;
+}
+.filters .field {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 140px;
+  max-width: 240px;
+}
+.filters label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.filters select {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  min-height: 34px;
+  width: 100%;
+  min-width: 0;
+}
+.filters select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* One screen: the list scrolls inside its panel, the page does not. */
+.runs-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: max(260px, calc(100dvh - 290px));
+  min-width: 0;
+  overscroll-behavior: contain;
+}
+.runs-panel > p {
+  margin: 0;
+  padding: 16px;
+}
+.runs-empty {
+  padding: 24px 16px;
+  display: grid;
+  gap: 6px;
+}
+.runs-empty p {
+  margin: 0;
+}
+
+table.runs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.runs thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.runs td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--grid);
+  vertical-align: top;
+}
+table.runs tr.group th {
+  text-align: left;
+  background: var(--lane);
+  padding: 6px 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+table.runs tr.group .muted {
+  font-weight: 400;
+}
+table.runs tr.finished td {
+  color: var(--muted);
+}
+table.runs tr.depth-1 td.agent {
+  padding-left: 26px;
+}
+table.runs tr.depth-2 td.agent {
+  padding-left: 42px;
+}
+table.runs tr.depth-3 td.agent,
+table.runs tr.depth-4 td.agent {
+  padding-left: 58px;
+}
+.agent-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: baseline;
+}
+.branch-mark {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.small {
+  display: block;
+  font-size: 11px;
+}
+td.prompt {
+  max-width: 32ch;
+}
+td.prompt > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tokens {
+  display: grid;
+  font: 12px var(--mono);
+  white-space: nowrap;
+}
+.tokens i {
+  font-style: normal;
+  color: var(--muted);
+}
+.where {
+  display: grid;
+  gap: 1px;
+  font-size: 12px;
+}
+.where code {
+  justify-self: start;
+}
+time.dur {
+  font: 12px var(--mono);
+  white-space: nowrap;
+}
+.id {
+  color: var(--muted);
+  font: 11px var(--mono);
+}
+
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  min-height: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  font: 600 12px var(--mono);
+  text-align: left;
+}
+
+.chip.role {
+  font-weight: 500;
+}
+.chip.role-orchestrator {
+  color: var(--ask);
+  border-color: var(--ask);
+  background: var(--ask-bg);
+}
+.chip.role-review {
+  color: var(--doing);
+  border-color: var(--doing);
+  background: var(--doing-bg);
+}
+.chip.st-doing {
+  color: var(--doing);
+  border-color: var(--doing);
+  background: var(--doing-bg);
+}
+.chip.st-done {
+  color: var(--done);
+  border-color: var(--done);
+  background: var(--done-bg);
+}
+.chip.st-block {
+  color: var(--block);
+  border-color: var(--block);
+  background: var(--block-bg);
+}
+
+/* Narrow screens: each run becomes a card of label/value pairs. */
+@media (max-width: 1000px) {
+  table.runs,
+  table.runs tbody,
+  table.runs tr,
+  table.runs td {
+    display: block;
+  }
+  table.runs thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  table.runs tr.group th {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  table.runs tr.run {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 4px 12px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--grid);
+  }
+  table.runs td {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+  }
+  table.runs td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  table.runs td.agent,
+  table.runs td.prompt {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+  table.runs tr.depth-1,
+  table.runs tr.depth-2,
+  table.runs tr.depth-3,
+  table.runs tr.depth-4 {
+    border-left: 3px solid var(--line);
+  }
+  table.runs tr.depth-1 {
+    margin-left: 12px;
+  }
+  table.runs tr.depth-2,
+  table.runs tr.depth-3,
+  table.runs tr.depth-4 {
+    margin-left: 24px;
+  }
+  table.runs tr[class*='depth-'] td.agent {
+    padding-left: 0;
+  }
+}
+
+/* Detail sheet slides in from the right. */
+dialog.sheet.side-sheet {
+  margin: 0 0 0 auto;
+  height: 100dvh;
+  max-height: 100dvh;
+  width: min(560px, 100vw);
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+}
+dialog.sheet.side-sheet .body {
+  overflow-y: auto;
+  max-height: 100%;
+}
+.sheet-head {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  align-items: start;
+}
+.sheet-head h2 {
+  font-size: 16px;
+}
+dialog.sheet.side-sheet h3 {
+  margin: 6px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+pre.prompt-full {
+  margin: 0;
+  padding: 10px;
+  background: var(--lane);
+  border-radius: 6px;
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow: auto;
+}
+ul.children {
+  margin: 0;
+  padding-left: 18px;
+}
