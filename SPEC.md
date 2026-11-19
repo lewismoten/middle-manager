@@ -7,7 +7,7 @@ agent is doing, on which machine and model, what it costs against each subscript
 board looks like, and whether each plan will run out at the right time. Humans use the web UI;
 agents use the same JSON API.
 
-Status: v0 spec, 2026-11-19. Owner: Lewis Moten. Lead agent: Hermes (Mercury Quill) on Kaylee.
+Status: v0 spec, 2026-11-19.
 
 ## 1. Principles
 
@@ -18,7 +18,7 @@ Status: v0 spec, 2026-11-19. Owner: Lewis Moten. Lead agent: Hermes (Mercury Qui
    services, no telemetry, no CDN at runtime (fonts and assets are bundled).
 3. **Read open, write with a token.** Any device on the LAN/tailnet can read. Every change (POST/PUT/
    PATCH/DELETE) needs `Authorization: Bearer <token>`. Tokens are created with a CLI command, stored only
-   as SHA-256 hashes, named (`lewis-laptop`, `hermes-lead`) and revocable. Folders/documents marked
+   as SHA-256 hashes, named (`laptop`, `lead-agent`) and revocable. Folders/documents marked
    `private: true` in config are also token-only to read.
 4. **Bounded growth.** The owner's servers have crashed from runaway logs. Every table that grows has a
    retention rule in config (days and/or row cap), enforced by a daily built-in job; the Settings page
@@ -31,7 +31,7 @@ Status: v0 spec, 2026-11-19. Owner: Lewis Moten. Lead agent: Hermes (Mercury Qui
 
 ## 2. Stack
 
-- Node >= 22 (Kaylee runs 26), TypeScript, ES modules. Server: `node:http` + `node:sqlite` (built in), no
+- Node >= 22.18 (runs server TypeScript directly; `node:sqlite` needs 22.13), TypeScript, ES modules. Server: `node:http` + `node:sqlite` (built in), no
   web framework. Dependencies kept minimal: `yaml` (config), `croner` (cron expressions) allowed; anything
   else needs a reason in the PR.
 - Front end: Vite + TypeScript, no UI framework. Charts drawn as inline SVG by our own small helpers (no
@@ -85,7 +85,7 @@ collectors:          # importers; each can be scheduled as a job
   - { id: hermes-kanban, kind: hermes-kanban, path: ~/.hermes/kanban/boards }
   - { id: hermes-cron, kind: hermes-cron, path: ~/.hermes/cron/jobs.json }
   - { id: processes, kind: process-scan, match: ["codex exec", "claude -p", "hermes"] }
-retention: { plan_readings_days: 120, runs_days: 90, job_runs_per_job: 50, job_output_kb: 64, events_days: 30 }
+retention: { plan_readings_days: 120, runs_days: 90, job_runs_per_job: 50, job_output_kb: 64, events_days: 30 }  # events_days applies to the audit table; task history is kept. Only finished runs expire.
 ```
 
 Secrets (tokens, credentials) never go in config or the DB in plain text; config only points at files.
@@ -192,7 +192,7 @@ status colors, light/dark) and `reference/usage-charts/*.svg`. Bundle IBM Plex l
 - **S6 notes & connections:** document index + renderer + private gating, Connections page with checks.
 - **S7 polish:** Usage page, a11y pass (axe), docs, screenshots in README.
 
-## 11. Reference material (on the owner's server; copy what you need into `reference/`)
+## 11. Reference material (maintainer's server only; local paths, not part of the repo)
 
 - `~/GameMaker-SandboxEdition/.for-lewis/tools/board/board.html` — sprint board UI (style reference).
 - `~/GameMaker-SandboxEdition/.for-lewis/tools/usage-charts-preview/*.svg`, `tools/usage-charts.mjs`.
