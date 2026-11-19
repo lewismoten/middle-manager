@@ -37,9 +37,11 @@ for (const tab of TABS) {
     await expect(page.locator('h1#page-title')).toHaveText(tab.title);
     await expect(page.locator('#site-name')).toHaveText('Test fleet');
     await expect(page.locator(`.tabs a[aria-current="page"]`)).toHaveText(tab.label);
-    await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
+    if (tab.id !== 'board') await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
     if (tab.id === 'settings')
       await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
+    else if (tab.id === 'board')
+      await expect(page.getByRole('button', { name: /Review queue metrics/ })).toBeVisible();
     else await expect(page.locator('.box h3', { hasText: 'From your config' })).toBeVisible();
 
     const fontsLoaded = await page.evaluate(async () => {

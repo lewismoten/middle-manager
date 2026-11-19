@@ -71,3 +71,41 @@ test.describe('interactions', () => {
     }
   });
 });
+test('board filters, card history, edits and sprint totals', async ({ page }) => {
+  await page.addInitScript((token) => localStorage.setItem('mm.token', token), E2E_TOKEN);
+  await page.goto('/#/board');
+  await page.getByRole('button', { name: 'Create card' }).click();
+  await page.getByLabel('Title', { exact: true }).fill('Synthetic interaction card');
+  await page.getByLabel('Body', { exact: true }).fill('A **bold** <img src=x> example');
+  await page.getByRole('button', { name: 'Save card' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Card details' });
+  await expect(sheet.locator('strong')).toHaveText('bold');
+  await expect(sheet.locator('img')).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Edit card' }).click();
+  await sheet.getByLabel('Status').selectOption('blocked');
+  await sheet.getByRole('button', { name: 'Save card' }).click();
+  await expect(sheet.getByText('backlog → blocked')).toBeVisible();
+  await sheet.getByLabel('Local note').fill('Check fixture');
+  await sheet.getByRole('button', { name: 'Add note' }).click();
+  await expect(sheet.getByText('Check fixture')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByLabel('Search cards').fill('queue metrics');
+  await page.getByLabel('Assignee lanes').check();
+  await expect(page.locator('.board-card')).toHaveCount(1);
+  await page.locator('.board-card').click();
+  await expect(sheet.getByRole('button', { name: 'Edit card' })).toHaveCount(0);
+  await sheet.getByLabel('Local note').fill('Imported card note');
+  await sheet.getByRole('button', { name: 'Add note' }).click();
+  await expect(sheet.getByText('Imported card note')).toBeVisible();
+  await page.screenshot({ path: 'test-results/screenshots/board-card.png' });
+  await page.keyboard.press('Escape');
+  await page.getByLabel('Search cards').fill('');
+  await page.getByRole('button', { name: 'Sprint', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Iteration A', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/screenshots/board-sprint.png' });
+  await page.getByRole('button', { name: 'Velocity' }).click();
+  await expect(page.locator('.velocity-row').filter({ hasText: 'Iteration A' })).toHaveText(
+    'Iteration A1',
+  );
+  await page.screenshot({ path: 'test-results/screenshots/board-velocity.png' });
+});
