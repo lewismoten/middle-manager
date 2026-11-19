@@ -90,7 +90,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
   return h(
     'section',
     { class: 'box', 'aria-labelledby': 'pacing-title' },
-    h('h3', { id: 'pacing-title' }, 'Pacing'),
+    h('h2', { id: 'pacing-title', class: 'box-h' }, 'Pacing'),
     h(
       'div',
       { class: 'table-scroll', tabindex: '0', 'aria-labelledby': 'pacing-title' },
@@ -124,7 +124,7 @@ function pastWeeksBox(plan: PlanSummary | undefined, tz: string | undefined): HT
   return h(
     'section',
     { class: 'box past-weeks', 'aria-labelledby': 'past-title' },
-    h('h3', { id: 'past-title' }, 'Past weeks'),
+    h('h2', { id: 'past-title', class: 'box-h' }, 'Past weeks'),
     weeks.length
       ? h(
           'div',
@@ -184,7 +184,7 @@ async function fiveHourBox(
   const box = h(
     'section',
     { class: 'box five-hour', 'aria-labelledby': 'five-title' },
-    h('h3', { id: 'five-title' }, '5-hour window'),
+    h('h2', { id: 'five-title', class: 'box-h' }, '5-hour window'),
   );
   const reset = r.resets_at ? new Date(r.resets_at).getTime() : null;
   const live = reset !== null && reset > now;
@@ -247,7 +247,7 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
     h(
       'div',
       { class: 'row' },
-      h('h3', { id: 'weekly-title' }, `${p.name} · weekly window`),
+      h('h2', { id: 'weekly-title', class: 'box-h' }, `${p.name} · weekly window`),
       w ? modeBadge(w.mode) : null,
     ),
   );

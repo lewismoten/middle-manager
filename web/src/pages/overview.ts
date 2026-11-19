@@ -77,7 +77,7 @@ export function planGauges(): HTMLElement {
     h(
       'div',
       { class: 'row' },
-      h('h3', { id: 'plans-title' }, 'Plans'),
+      h('h2', { id: 'plans-title', class: 'box-h' }, 'Plans'),
       h('a', { href: '#/burndown', class: 'more' }, 'Burndown'),
     ),
     grid,

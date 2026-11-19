@@ -26,6 +26,12 @@ export default defineConfig({
         use: { viewport: { width, height: heightFor(width) }, colorScheme },
       })),
     ),
+    // README screenshots: skipped unless MM_README_SHOTS is set (npm run screenshots).
+    {
+      name: 'readme',
+      testMatch: 'readme-shots.spec.ts',
+      use: { viewport: { width: 1440, height: 900 }, colorScheme: 'light' },
+    },
     // Behaviour (keyboard, theme, sign-in): once is enough.
     {
       name: 'interactions',

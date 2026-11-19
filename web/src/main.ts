@@ -24,6 +24,7 @@ import { mountAgents } from './pages/agents.ts';
 import { mountSchedules } from './pages/schedules.ts';
 import { mountNotes } from './pages/notes.ts';
 import { mountConnections } from './pages/connections.ts';
+import { mountUsage } from './pages/usage.ts';
 import { setupThemeToggle } from './theme.ts';
 
 let config: PublicConfig | null = null;
@@ -139,7 +140,7 @@ function fromConfig(tab: Tab): HTMLElement | null {
   return h(
     'div',
     { class: 'box' },
-    h('h3', {}, 'From your config'),
+    h('h2', { class: 'box-h' }, 'From your config'),
     h('ul', {}, ...items.map((i) => h('li', {}, i))),
   );
 }
@@ -151,7 +152,11 @@ function bytes(n: number): string {
 }
 
 async function settingsLive(): Promise<HTMLElement> {
-  const box = h('div', { class: 'box', 'aria-live': 'polite' }, h('h3', {}, 'Database'));
+  const box = h(
+    'div',
+    { class: 'box', 'aria-live': 'polite' },
+    h('h2', { class: 'box-h' }, 'Database'),
+  );
   try {
     const s = await api<Stats>('/stats');
     const kv = h('dl', { class: 'kv' });
@@ -178,6 +183,7 @@ const LIVE_PAGES: Record<string, typeof mountAgents> = {
   schedules: mountSchedules,
   notes: mountNotes,
   connections: mountConnections,
+  usage: mountUsage,
 };
 /** Pages that show token-only data and redraw when you sign in or out. */
 const AUTH_PAGES = new Set(['board', 'notes', 'connections']);
@@ -225,7 +231,7 @@ function renderPage(tab: Tab, focus: boolean): void {
   const coming = h(
     'div',
     { class: 'box' },
-    h('h3', {}, 'What will appear here'),
+    h('h2', { class: 'box-h' }, 'What will appear here'),
     h(
       'ul',
       { class: 'coming' },

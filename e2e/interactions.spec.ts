@@ -64,14 +64,14 @@ test.describe('interactions', () => {
 
   test('burndown: plan picker, hover read-out and posting a reading', async ({ page, request }) => {
     await page.goto('/#/burndown');
-    await expect(page.locator('.weekly h3')).toContainText('Plan A');
+    await expect(page.locator('#weekly-title')).toContainText('Plan A');
     const svg = page.locator('.weekly svg[role="img"]');
     const box = (await svg.boundingBox())!;
     await page.mouse.move(box.x + box.width * 0.45, box.y + box.height / 2);
     await expect(page.locator('.weekly .chart-tip')).toContainText('% used');
 
     await page.locator('.plan-picker button', { hasText: 'Plan C' }).click();
-    await expect(page.locator('.weekly h3')).toContainText('Plan C');
+    await expect(page.locator('#weekly-title')).toContainText('Plan C');
     await expect(page.locator('.weekly')).toContainText('No weekly readings yet');
     await expect(page.locator('.plan-picker button[aria-pressed="true"]')).toHaveText('Plan C');
 
@@ -84,11 +84,11 @@ test.describe('interactions', () => {
     });
     expect(res.status()).toBe(201);
     await page.reload();
-    await expect(page.locator('.weekly h3')).toContainText('Plan C');
+    await expect(page.locator('#weekly-title')).toContainText('Plan C');
     await expect(page.locator('.weekly .mode')).toHaveText('burn');
     await page.locator('.plan-picker button', { hasText: 'Plan A' }).focus();
     await page.keyboard.press('Enter');
-    await expect(page.locator('.weekly h3')).toContainText('Plan A');
+    await expect(page.locator('#weekly-title')).toContainText('Plan A');
   });
 
   test('no horizontal overflow at 320 px on any tab', async ({ page }) => {

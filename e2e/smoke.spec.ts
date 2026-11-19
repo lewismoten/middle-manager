@@ -31,7 +31,7 @@ async function horizontalOverflow(page: Page): Promise<number> {
 }
 
 // Pages that are built have their own <page>.smoke.spec.ts.
-const BUILT = new Set(['agents', 'schedules', 'notes', 'connections']);
+const BUILT = new Set(['agents', 'schedules', 'notes', 'connections', 'usage']);
 
 for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
   test(`${tab.id} renders without overflow or errors`, async ({ page, baseURL }, info) => {
@@ -61,7 +61,7 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
       await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
       if (tab.id === 'settings')
         await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
-      else await expect(page.locator('.box h3', { hasText: 'From your config' })).toBeVisible();
+      else await expect(page.locator('.box .box-h', { hasText: 'From your config' })).toBeVisible();
     }
     if (tab.id === 'overview') {
       await expect(page.locator('.plan-gauge')).toHaveCount(3);
