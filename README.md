@@ -18,6 +18,18 @@ own setup.
 
 Status: early development. See [SPEC.md](SPEC.md).
 
+## Quick start
+
+```sh
+npm ci && npm run build
+cp config/middle-manager.example.yaml config/middle-manager.yaml   # then edit it
+npx middle-manager token create laptop
+npm start
+```
+
+Full steps, including the systemd user unit: [docs/install.md](docs/install.md).
+Font credits: [NOTICE.md](NOTICE.md).
+
 ## License
 
 MIT
