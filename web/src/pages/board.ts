@@ -296,8 +296,9 @@ export function board(canWrite: boolean, projects: PublicConfig['projects']) {
     for (const col of cols) {
       const name = caption(col.status);
       const collapsed = !col.total && !showEmpty.checked;
+      // h2 under the page title; h3 when the grid sits under a swimlane's h2.
       const head = h(
-        'h3',
+        lanes.checked ? 'h3' : 'h2',
         { class: 'board-col-head' },
         h('span', {}, name),
         h('small', { class: 'count' }, countLabel(col)),
@@ -308,7 +309,13 @@ export function board(canWrite: boolean, projects: PublicConfig['projects']) {
           class: 'board-column ' + col.status + (collapsed ? ' collapsed' : ''),
           'data-status': col.status,
           'data-active': col.status === active,
-          'aria-label': name + ', ' + countLabel(col) + ' cards',
+          // Lanes repeat every column, so each region name carries its lane to stay unique.
+          'aria-label':
+            name +
+            (lanes.checked ? ' (' + (laneKey || 'Unassigned') + ')' : '') +
+            ', ' +
+            countLabel(col) +
+            ' cards',
         },
         head,
       );
@@ -320,7 +327,8 @@ export function board(canWrite: boolean, projects: PublicConfig['projects']) {
           draw();
         });
         strip.className = 'board-strip';
-        strip.setAttribute('aria-label', name + ': no cards. Show empty columns');
+        // The name starts with the visible text (WCAG 2.5.3, label in name).
+        strip.setAttribute('aria-label', name + ' 0: no cards. Show empty columns');
         section.replaceChildren(strip);
         grid.append(section);
         continue;

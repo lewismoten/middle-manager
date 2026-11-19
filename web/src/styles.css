@@ -313,7 +313,8 @@ h2 {
   align-content: start;
   min-width: 0;
 }
-.box h3 {
+.box h3,
+.box h2.box-h {
   margin: 0;
   font-size: 13px;
   text-transform: uppercase;

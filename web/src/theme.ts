@@ -31,8 +31,9 @@ export function setupThemeToggle(button: HTMLButtonElement): void {
     icon.setAttribute('aria-hidden', 'true');
     icon.textContent = ICON[t];
     button.append(icon, ` ${LABEL[t]}`);
-    const desc = t === 'auto' ? 'follows your system' : LABEL[t].toLowerCase();
-    button.setAttribute('aria-label', `Theme: ${desc}. Switch to ${LABEL[next]}`);
+    const desc = t === 'auto' ? 'Auto, follows your system' : LABEL[t];
+    // The accessible name starts with the visible label (WCAG 2.5.3, label in name).
+    button.setAttribute('aria-label', `${LABEL[t]} theme. Switch to ${LABEL[next]}`);
     button.title = `Theme: ${desc}`;
   };
   button.addEventListener('click', () => {

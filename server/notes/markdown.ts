@@ -186,7 +186,10 @@ function renderList(lines: string[], depth: number): string {
       let box = '';
       const task = /^\[([ xX])\][ \t]+/.exec(text);
       if (task) {
-        box = `<input type="checkbox" disabled${task[1] === ' ' ? '' : ' checked'}> `;
+        box =
+          task[1] === ' '
+            ? '<input type="checkbox" disabled aria-label="Not done"> '
+            : '<input type="checkbox" disabled checked aria-label="Done"> ';
         text = text.slice(task[0].length);
       }
       let html = renderBlocks(text.split('\n'), depth + 1);

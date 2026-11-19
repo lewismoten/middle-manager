@@ -16,6 +16,7 @@ import { seedSchedules } from './fixtures/schedules.ts';
 import { seedNotes } from './fixtures/notes.ts';
 import { seedConnections } from './fixtures/connections.ts';
 import { seedBoard } from './fixtures/board.ts';
+import { seedUsage } from './fixtures/usage.ts';
 
 const bigBoard = process.argv[2] === 'board';
 
@@ -37,6 +38,7 @@ plans:
   - { id: plan-c, name: "Plan C", provider: manual }
 models:
   plan-a: [small, large]
+  plan-b: [medium]
 local_models:
   - { id: local, name: "Local model", url: ${JSON.stringify(conn.ollamaUrl)}, kind: ollama }
   - { id: offline, name: "Offline server", url: ${JSON.stringify(conn.offlineUrl)}, kind: openai }
@@ -72,7 +74,10 @@ db.prepare(
 seedPlanReadings(db);
 seedSchedules(db, path.join(dir, 'jobs.json'));
 // The agents fixture adds its own cards; the large board keeps the exact synthetic distribution.
-if (!bigBoard) seedAgents(db);
+if (!bigBoard) {
+  seedAgents(db);
+  seedUsage(db);
+}
 // Collectors would scan this host's real processes and timers; the smoke tests use seeded data
 // only (job timers stay off too; "run now" still works).
 const running = await startServer({ config, db, agentCollectors: false, schedules: false });

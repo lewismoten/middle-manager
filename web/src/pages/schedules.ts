@@ -84,7 +84,12 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
     h('span', { class: 'head-actions' }, newJob, refresh),
   );
   const ownList = h('div', { class: 'sched-scroll', id: 'own-jobs-list' });
-  const extList = h('div', { class: 'sched-scroll', id: 'external-jobs-list' });
+  const extList = h('div', {
+    class: 'sched-scroll',
+    id: 'external-jobs-list',
+    tabindex: '0',
+    'aria-label': 'Mirrored schedules',
+  });
   const ownCount = h('span', { class: 'muted count' });
   const extCount = h('span', { class: 'muted count' });
   const grid = h(
@@ -136,7 +141,7 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
           : job.running
             ? 'Already running'
             : `Run "${job.name}" now`,
-        'aria-label': `Run ${job.name} now`,
+        'aria-label': `Run now: ${job.name}`,
       },
       job.running ? 'Running…' : 'Run now',
     );

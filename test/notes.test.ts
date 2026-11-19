@@ -53,7 +53,9 @@ describe('renderMarkdown', () => {
       '<p>Some <strong>bold</strong>, <em>em</em>, <code>code</code> and <del>gone</del>.\nSame paragraph.</p>',
     );
     expect(html).toMatch(/<ul>\n<li>one<\/li>\n<li>two\n?<ul>\n<li>nested<\/li>\n<\/ul><\/li>/);
-    expect(html).toContain('<li class="task"><input type="checkbox" disabled checked> done</li>');
+    expect(html).toContain(
+      '<li class="task"><input type="checkbox" disabled checked aria-label="Done"> done</li>',
+    );
     expect(html).toContain('<ol>\n<li>first</li>\n<li>second</li>\n</ol>');
     expect(html).toContain('<blockquote>\n<p>quoted</p>\n</blockquote>');
     expect(html).toContain('<pre><code class="lang-ts">const a = 1 &lt; 2;</code></pre>');

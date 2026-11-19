@@ -225,3 +225,23 @@ paths:
           }
       responses:
         '200': { description: '{ now, stale_after_h, plans[], local_models[] }' }
+  /usage:
+    get:
+      summary: >-
+        Tokens by plan and model per hour and per day, runs started per day by agent kind, and
+        recent cost notes. Built from runs; a run's token totals are spread evenly over the hours
+        it was open. A run counts against the plan named by its provider, else the plan whose
+        model ladder lists its model, else the only plan reading that agent's login.
+      parameters:
+        - { in: query, name: days, schema: { type: integer, default: 14, minimum: 1, maximum: 90 } }
+        - {
+            in: query,
+            name: hours,
+            schema: { type: integer, default: 48, minimum: 1, maximum: 168 },
+          }
+      responses:
+        '200':
+          {
+            description: '{ now, timezone, days, hours, series[], hourly, daily, runs_per_day, cost_notes[], runs_without_tokens }',
+          }
+        '400': { description: days or hours out of range }

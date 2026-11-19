@@ -17,6 +17,7 @@ import { scheduleRoutes } from './schedules/routes.ts';
 import type { CollectorHooks } from './schedules/collectors.ts';
 import { noteRoutes } from './notes/routes.ts';
 import { connectionRoutes } from './connections/routes.ts';
+import { usageRoutes } from './usage/routes.ts';
 import { forgetScheduler, schedulerFor } from './schedules/scheduler.ts';
 import { ROOT_DIR, VERSION } from './version.ts';
 
@@ -65,6 +66,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     ...scheduleRoutes,
     ...noteRoutes,
     ...connectionRoutes,
+    ...usageRoutes,
     ...(opts.extraRoutes ?? []),
   ]);
   const server = createServer((req, res) => void handler(req, res));
