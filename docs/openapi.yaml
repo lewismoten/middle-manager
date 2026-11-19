@@ -89,3 +89,94 @@ paths:
       security: *write
       responses:
         '201': { description: Counts of boards and cards processed }
+  # ---- Schedules (S5) ----
+  /jobs:
+    get:
+      summary: middle-manager jobs with next run, last run and failures in 24 h
+      responses:
+        '200': { description: '{ now, site_timezone, jobs[], failed_24h, collectors[] }' }
+    post:
+      summary: Create a job. Shell jobs need the jobs:shell scope.
+      security: [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: &jobFields
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 80 }
+                schedule: { type: string, description: 'Five-field cron or @hourly/@daily/@weekly' }
+                timezone:
+                  { type: [string, 'null'], description: IANA zone; null uses site.timezone }
+                kind: { enum: [collector, shell] }
+                collector_id: { type: [string, 'null'], description: Collector jobs only }
+                command: { type: [string, 'null'], description: Shell jobs only; run with /bin/sh }
+                enabled: { type: boolean }
+                timeout_s: { type: integer, minimum: 1, maximum: 86400 }
+                notify: { type: [string, 'null'], description: Stored only for now }
+      responses:
+        '201': { description: The job }
+        '400': { description: Validation error }
+        '403': { description: Shell job without the jobs:shell scope }
+        '409': { description: Name taken }
+  /jobs/preview:
+    get:
+      summary: Check a schedule and list its next three runs
+      parameters:
+        - { in: query, name: schedule, required: true, schema: { type: string } }
+        - { in: query, name: timezone, schema: { type: string } }
+      responses:
+        '200': { description: '{ ok, error?, next[], timezone }' }
+  /jobs/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: One job
+      responses:
+        '200': { description: The job }
+        '404': { description: No such job }
+    patch:
+      summary: Edit a job (fields as for POST; omitted fields are kept). Shell jobs need jobs:shell.
+      security: [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: *jobFields
+      responses:
+        '200': { description: The job }
+    delete:
+      summary: Delete a job and its runs. Shell jobs need jobs:shell.
+      security: [{ token: [] }]
+      responses:
+        '200': { description: '{ deleted: id }' }
+        '409': { description: The job is running }
+  /jobs/{id}/run:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    post:
+      summary: Run a job now. Answers 202 at once; ?wait=1 waits for the end.
+      security: [{ token: [] }]
+      parameters: [{ in: query, name: wait, schema: { enum: ['1'] } }]
+      responses:
+        '202': { description: The started run }
+        '200': { description: The finished run (with ?wait=1) }
+        '409': { description: Already running }
+  /jobs/{id}/runs:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: Newest runs first, with capped output
+      parameters: [{ in: query, name: limit, schema: { type: integer, default: 20 } }]
+      responses:
+        '200': { description: '{ job_id, runs[] }' }
+  /external-jobs:
+    get:
+      summary: Read-only mirror of Hermes cron and systemd timers, with read time and staleness
+      responses:
+        '200': { description: '{ now, jobs[] }' }
+  /external-jobs/refresh:
+    post:
+      summary: Re-read every hermes-cron and systemd-timers collector now
+      security: [{ token: [] }]
+      responses:
+        '200': { description: '{ collectors[] } with ok, jobs, removed or error' }

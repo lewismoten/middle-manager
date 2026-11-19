@@ -21,6 +21,7 @@ import { SHIPPED, SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './t
 import { burndownPage } from './pages/burndown.ts';
 import { planGauges } from './pages/overview.ts';
 import { mountAgents } from './pages/agents.ts';
+import { mountSchedules } from './pages/schedules.ts';
 import { setupThemeToggle } from './theme.ts';
 
 let config: PublicConfig | null = null;
@@ -170,7 +171,10 @@ async function settingsLive(): Promise<HTMLElement> {
 
 /** Pages that are built replace the empty state; each returns a cleanup for timers. */
 let leavePage: (() => void) | null = null;
-const LIVE_PAGES: Record<string, typeof mountAgents> = { agents: mountAgents };
+const LIVE_PAGES: Record<string, typeof mountAgents> = {
+  agents: mountAgents,
+  schedules: mountSchedules,
+};
 
 function renderPage(tab: Tab, focus: boolean): void {
   leavePage?.();
