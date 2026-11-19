@@ -76,6 +76,7 @@ function fixtures(dir: string) {
       ],
     }),
   );
+  const sessionDirs = { claude_dir: path.join(dir, 'claude'), codex_dir: path.join(dir, 'codex') };
   return {
     machines: [{ id: 'server-1', name: 'Server' }],
     plans: [
@@ -97,14 +98,9 @@ function fixtures(dir: string) {
     collectors: [
       { id: 'csv', kind: 'csv-import', path: csv },
       { id: 'hermes-kanban', kind: 'hermes-kanban', path: boards },
-      { id: 'workers', kind: 'systemd-workers', prefix: 'worker-' },
-      { id: 'processes', kind: 'process-scan', match: ['codex exec', 'claude -p'] },
-      {
-        id: 'tokens',
-        kind: 'session-tokens',
-        claude_dir: path.join(dir, 'claude'),
-        codex_dir: path.join(dir, 'codex'),
-      },
+      { id: 'workers', kind: 'systemd-workers', prefix: 'worker-', ...sessionDirs },
+      { id: 'processes', kind: 'process-scan', match: ['codex exec', 'claude -p'], ...sessionDirs },
+      { id: 'tokens', kind: 'session-tokens', ...sessionDirs },
       { id: 'hermes-cron', kind: 'hermes-cron', path: cron },
       { id: 'timers', kind: 'systemd-timers', prefix: 'backup-' },
     ],

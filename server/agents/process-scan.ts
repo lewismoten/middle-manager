@@ -146,24 +146,116 @@ function isShellWrapper(p: ProcInfo): boolean {
   return SHELLS.has(base) && p.argv.slice(1).some((a) => /^-\w*c\w*$/.test(a));
 }
 
-/** Pulls the model, and the prompt when it is on the command line, out of argv. */
-export function argvDetails(argv: string[]): { model: string | null; prompt: string | null } {
-  let model: string | null = null;
-  let prompt: string | null = null;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i] ?? '';
-    if (a === '--model' || a === '-m') model = argv[i + 1] ?? null;
-    else if (a.startsWith('--model=')) model = a.slice(8);
-    if ((a === '-p' || a === '--print') && argv[i + 1] && !argv[i + 1]?.startsWith('-')) {
-      prompt = argv[i + 1] ?? null;
+const OPERATORS = new Set([';', '&&', '||', '|', '&']);
+
+/**
+ * Splits a command line into words the way a POSIX shell would for our purposes: single and
+ * double quotes, backslash escapes (systemd prints ExecStart with escaped spaces) and the
+ * operators ; && || | & as words of their own. No expansion is done.
+ */
+export function shellWords(text: string): string[] {
+  const out: string[] = [];
+  let word = '';
+  let has = false;
+  let quote: '"' | "'" | null = null;
+  const flush = () => {
+    if (has) out.push(word);
+    word = '';
+    has = false;
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i] as string;
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else word += ch;
+    } else if (quote === '"') {
+      if (ch === '"') quote = null;
+      else if (ch === '\\' && i + 1 < text.length && '"\\$`'.includes(text[i + 1] as string))
+        word += text[++i];
+      else word += ch;
+    } else if (ch === '\\') {
+      if (i + 1 < text.length) word += text[++i];
+      has = true;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      has = true;
+    } else if (/\s/.test(ch)) {
+      flush();
+    } else if (ch === ';' || ch === '|' || ch === '&') {
+      flush();
+      const two = text.slice(i, i + 2);
+      if (two === '&&' || two === '||') i++;
+      out.push(two === '&&' || two === '||' ? two : ch);
+    } else {
+      word += ch;
+      has = true;
     }
   }
-  const exec = argv.indexOf('exec');
-  if (!prompt && exec >= 0 && /codex/.test(argv.slice(0, exec).join(' '))) {
-    const last = argv[argv.length - 1];
-    if (argv.length - 1 > exec && last && !last.startsWith('-')) prompt = last;
+  flush();
+  return out;
+}
+
+const isShell = (w: string | undefined) => SHELLS.has(path.basename(w ?? '').replace(/^-/, ''));
+
+/** Replaces each `sh -c <script>` script with its words, a few levels deep. */
+export function expandShellScripts(argv: string[], depth = 0): string[] {
+  if (depth > 4) return argv;
+  const out: string[] = [];
+  argv.forEach((w, i) => {
+    if (i >= 2 && /^-\w*c\w*$/.test(argv[i - 1] ?? '') && isShell(argv[i - 2])) {
+      out.push(...expandShellScripts(shellWords(w), depth + 1));
+    } else out.push(w);
+  });
+  return out;
+}
+
+const AGENT_BIN = /^(codex|claude)$/;
+const unquote = (v: string) => v.replace(/^(["'])(.*)\1$/, '$2');
+
+/**
+ * Pulls the model, and the prompt when it is on the command line, out of argv. Shell wrappers
+ * (`bash -c "... codex exec -m x ..."`) are looked into, and only the codex/claude invocation's
+ * own flags count, so `git commit -m msg && claude -p ...` does not read "msg" as a model.
+ * Model flags: -m / --model / --model=<m>, and Codex config overrides -c / --config model=<m>.
+ */
+export function argvDetails(argv: string[]): { model: string | null; prompt: string | null } {
+  const words = expandShellScripts(argv);
+  // The command segment (between shell operators) that runs the agent; else every word.
+  let seg = words;
+  let from = 0;
+  let segStart = 0;
+  for (let i = 0; i <= words.length; i++) {
+    const w = words[i];
+    if (w === undefined || OPERATORS.has(w)) {
+      const part = words.slice(segStart, i);
+      const at = part.findIndex((x) => AGENT_BIN.test(path.basename(x)));
+      if (at >= 0) {
+        seg = part;
+        from = at;
+        break;
+      }
+      segStart = i + 1;
+    }
   }
-  return { model, prompt };
+  let model: string | null = null;
+  let prompt: string | null = null;
+  for (let i = from; i < seg.length; i++) {
+    const a = seg[i] ?? '';
+    const next = seg[i + 1];
+    if (a === '--model' || a === '-m') model = next ?? null;
+    else if (a.startsWith('--model=')) model = a.slice(8);
+    else if ((a === '-c' || a === '--config') && next && /^model\s*=/.test(next)) {
+      model ??= unquote(next.replace(/^model\s*=\s*/, ''));
+    } else if (a.startsWith('--config=model='))
+      model ??= unquote(a.slice('--config=model='.length));
+    if ((a === '-p' || a === '--print') && next && !next.startsWith('-')) prompt = next;
+  }
+  const exec = seg.indexOf('exec', from);
+  if (!prompt && exec >= 0 && /codex/.test(seg.slice(0, exec).join(' '))) {
+    const last = seg[seg.length - 1];
+    if (seg.length - 1 > exec && last && !last.startsWith('-')) prompt = last;
+  }
+  return { model: model || null, prompt };
 }
 
 export interface Matched {

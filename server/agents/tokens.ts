@@ -208,7 +208,11 @@ export const codexReader: TokenReader<CodexState> = {
   line(s, o) {
     const p = obj(o.payload);
     if (!p) return;
-    if (o.type === 'turn_context' && typeof p.model === 'string') s.model = p.model;
+    if (o.type === 'turn_context') {
+      // The turn's model; newer logs also carry it under collaboration_mode.settings.
+      const m = p.model ?? obj(obj(p.collaboration_mode)?.settings)?.model;
+      if (typeof m === 'string' && m) s.model = m;
+    }
     if (p.type === 'token_count') {
       const total = obj(obj(p.info)?.total_token_usage);
       if (total) s.total = total;
