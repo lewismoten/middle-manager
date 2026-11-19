@@ -192,14 +192,10 @@ status colors, light/dark) and `reference/usage-charts/*.svg`. Bundle IBM Plex l
 - **S6 notes & connections:** document index + renderer + private gating, Connections page with checks.
 - **S7 polish:** Usage page, a11y pass (axe), docs, screenshots in README.
 
-## 11. Reference material (maintainer's server only; local paths, not part of the repo)
+## 11. Reference material
 
-- `~/GameMaker-SandboxEdition/.for-lewis/tools/board/board.html` — sprint board UI (style reference).
-- `~/GameMaker-SandboxEdition/.for-lewis/tools/usage-charts-preview/*.svg`, `tools/usage-charts.mjs`.
-- `~/GameMaker-SandboxEdition/.for-lewis/tools/kaylee-usage/` — plan readings + burndown + pacing (Python).
-- `~/GameMaker-SandboxEdition/.for-lewis/research/agents/*.csv` — real readings for fixtures/import.
-- `~/GameMaker-SandboxEdition/.for-lewis/tools/hermes-board/board.py` — read-only Hermes kanban reader.
-- `~/.hermes/cron/jobs.json` — Hermes cron jobs (mirror read-only).
+Maintainers keep local, git-ignored reference files in `reference/` (see `reference/SOURCES.md` on the
+maintainer's machine): a previous sprint board, usage charts and a Python burndown implementation.
 
 Never copy personal content (what-mattered notes, chat logs, job-search files) into the repo; fixtures
 must be synthetic or plan-reading numbers only.
