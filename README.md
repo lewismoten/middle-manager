@@ -1,6 +1,6 @@
 # middle-manager
 
-*It watches others work, schedules meetings, and reports the burn.*
+_It watches others work, schedules meetings, and reports the burn._
 
 A self-hosted dashboard and JSON API for keeping an eye on a fleet of AI coding agents:
 
