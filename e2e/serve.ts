@@ -12,9 +12,13 @@ import { E2E_PORT, E2E_TOKEN } from './constants.ts';
 import { seedPlanReadings } from './seed.ts';
 import { seedAgents } from './fixtures/agents.ts';
 import { seedSchedules } from './fixtures/schedules.ts';
+import { seedNotes } from './fixtures/notes.ts';
+import { seedConnections } from './fixtures/connections.ts';
 
 const dir = mkdtempSync(path.join(tmpdir(), 'mm-e2e-'));
 const configFile = path.join(dir, 'middle-manager.yaml');
+const notes = seedNotes(dir);
+const conn = await seedConnections(dir);
 writeFileSync(
   configFile,
   `site: { name: "Test fleet", timezone: "UTC" }
@@ -23,18 +27,20 @@ database: { path: ${JSON.stringify(path.join(dir, 'mm.db'))} }
 machines:
   - { id: server-1, name: "Build server", role: "agents run here" }
 plans:
-  - { id: plan-a, name: "Plan A", provider: manual, windows: [weekly, five_hour] }
-  - { id: plan-b, name: "Plan B", provider: manual, empty_buffer_hours: 2 }
+  # plan-a and plan-b have seeded readings; their sources are synthetic files (e2e/fixtures/connections.ts).
+  - { id: plan-a, name: "Plan A", provider: anthropic-oauth, credentials: ${JSON.stringify(conn.credentials)}, windows: [weekly, five_hour] }
+  - { id: plan-b, name: "Plan B", provider: codex-sessions, sessions_dir: ${JSON.stringify(conn.sessionsDir)}, empty_buffer_hours: 2 }
   - { id: plan-c, name: "Plan C", provider: manual }
 models:
   plan-a: [small, large]
 local_models:
-  - { id: local, name: "Local model", url: "http://127.0.0.1:9", kind: openai }
+  - { id: local, name: "Local model", url: ${JSON.stringify(conn.ollamaUrl)}, kind: ollama }
+  - { id: offline, name: "Offline server", url: ${JSON.stringify(conn.offlineUrl)}, kind: openai }
 projects:
   - { id: main, name: "Main project", repo: "owner/repo", default_branch: develop }
 documents:
-  - { id: logs, name: "Ops logs", path: ${JSON.stringify(dir)} }
-  - { id: private, name: "Private notes", path: ${JSON.stringify(dir)}, private: true }
+  - { id: logs, name: "Ops logs", path: ${JSON.stringify(notes.logs)} }
+  - { id: private, name: "Private notes", path: ${JSON.stringify(notes.private)}, private: true }
 collectors:
   - { id: processes, kind: process-scan }
   - { id: hermes-cron, kind: hermes-cron, path: ${JSON.stringify(path.join(dir, 'jobs.json'))} }
@@ -70,6 +76,7 @@ async function stop() {
   if (done) return;
   done = true;
   await running.close();
+  await conn.close();
   db.close();
   rmSync(dir, { recursive: true, force: true });
   process.exit(0);

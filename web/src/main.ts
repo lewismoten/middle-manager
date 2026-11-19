@@ -22,6 +22,8 @@ import { burndownPage } from './pages/burndown.ts';
 import { planGauges } from './pages/overview.ts';
 import { mountAgents } from './pages/agents.ts';
 import { mountSchedules } from './pages/schedules.ts';
+import { mountNotes } from './pages/notes.ts';
+import { mountConnections } from './pages/connections.ts';
 import { setupThemeToggle } from './theme.ts';
 
 let config: PublicConfig | null = null;
@@ -174,7 +176,11 @@ let leavePage: (() => void) | null = null;
 const LIVE_PAGES: Record<string, typeof mountAgents> = {
   agents: mountAgents,
   schedules: mountSchedules,
+  notes: mountNotes,
+  connections: mountConnections,
 };
+/** Pages that show token-only data and redraw when you sign in or out. */
+const AUTH_PAGES = new Set(['board', 'notes', 'connections']);
 
 function renderPage(tab: Tab, focus: boolean): void {
   leavePage?.();
@@ -293,7 +299,7 @@ function openSignIn(): void {
       setToken(null);
       who = null;
       renderSignInButton();
-      if (tabFromHash(location.hash).id === 'board') route(false);
+      if (AUTH_PAGES.has(tabFromHash(location.hash).id)) route(false);
       dialog.close();
     });
   } else {
@@ -352,7 +358,7 @@ form.addEventListener('submit', (ev) => {
       setToken(token);
       who = res.token;
       renderSignInButton();
-      if (tabFromHash(location.hash).id === 'board') route(false);
+      if (AUTH_PAGES.has(tabFromHash(location.hash).id)) route(false);
       dialog.close();
     })
     .catch((err: unknown) => {

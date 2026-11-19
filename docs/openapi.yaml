@@ -180,3 +180,46 @@ paths:
       security: [{ token: [] }]
       responses:
         '200': { description: '{ collectors[] } with ok, jobs, removed or error' }
+  /documents:
+    get:
+      summary: >-
+        Document collections and their documents, newest first. Private collections are listed
+        as locked (no titles or counts) without a token; asking for one directly is a 401.
+        Folders are rescanned on read at most every 30 s.
+      parameters:
+        - { in: query, name: collection, schema: { type: string } }
+        - { in: query, name: q, description: Title or path contains, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, default: 500, maximum: 2000 } }
+        - { in: query, name: refresh, description: Rescan now, schema: { enum: ['1'] } }
+      responses:
+        '200': { description: '{ now, collections[], documents[], total, limit }' }
+        '401': { description: A private collection was asked for without a token }
+        '404': { description: No such collection }
+  /documents/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: >-
+        One document read from disk and rendered to safe HTML (raw HTML in the file is shown as
+        text; only http(s) and mailto links). Files over 512 KB are cut and marked truncated.
+      responses:
+        '200':
+          {
+            description: '{ id, collection_id, collection_name, path, title, date, mtime, size, private, truncated, html }',
+          }
+        '401': { description: Private document and no token }
+        '404': { description: Unknown id, or the file is gone }
+  /connections:
+    get:
+      summary: >-
+        Status of each plan source (checked on this host without calling the provider) with its
+        newest readings, and a live check of each local model (cached 15 s). File paths and URLs
+        are included only with a token.
+      parameters:
+        - {
+            in: query,
+            name: refresh,
+            description: Re-check local models now,
+            schema: { enum: ['1'] },
+          }
+      responses:
+        '200': { description: '{ now, stale_after_h, plans[], local_models[] }' }

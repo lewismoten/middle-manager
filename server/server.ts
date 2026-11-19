@@ -14,6 +14,8 @@ import { scheduleAgentCollectors } from './agents/collect.ts';
 import { runRoutes } from './agents/routes.ts';
 import { scheduleMirrors } from './schedules/mirror.ts';
 import { scheduleRoutes } from './schedules/routes.ts';
+import { noteRoutes } from './notes/routes.ts';
+import { connectionRoutes } from './connections/routes.ts';
 import { forgetScheduler, schedulerFor } from './schedules/scheduler.ts';
 import { ROOT_DIR, VERSION } from './version.ts';
 
@@ -57,6 +59,8 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     ...planRoutes,
     ...runRoutes,
     ...scheduleRoutes,
+    ...noteRoutes,
+    ...connectionRoutes,
     ...(opts.extraRoutes ?? []),
   ]);
   const server = createServer((req, res) => void handler(req, res));
