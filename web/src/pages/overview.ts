@@ -1,5 +1,5 @@
 // Overview: one gauge per plan (used, even pace, projection, mode, reset countdown, reading age).
-import { api } from '../api.ts';
+import { api, listTasks } from '../api.ts';
 import { STATUSES, type Task } from './board-logic.ts';
 import type { RunView } from './agents-logic.ts';
 import type { ConnectionsResponse } from './connections-logic.ts';
@@ -125,7 +125,7 @@ export function overviewPage(): HTMLElement {
     if (loading) return;
     loading = true;
     const pace = getPace();
-    const tasks = api<Task[]>('/tasks');
+    const tasks = listTasks<Task>();
     const failures = Promise.all([
       api<JobsResponse>('/jobs'),
       api<{ now: string; jobs: ExternalJob[] }>('/external-jobs'),

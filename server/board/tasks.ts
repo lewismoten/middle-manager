@@ -58,6 +58,10 @@ export function atomic<T>(db: Db, fn: () => T): T {
 export function save(db: Db, values: Values, actor: string, id?: number, ref?: string) {
   const now = new Date().toISOString();
   const previous = id === undefined ? undefined : task(db, id);
+  if (previous?.claimed_by && values.status && values.status !== previous.status) {
+    values.status_since = now;
+    if (values.status === 'todo' || values.status === 'backlog') values.claimed_by = null;
+  }
   const keys = Object.keys(values);
   if (previous && keys.every((k) => previous[k] === values[k])) return previous;
   if (previous) {

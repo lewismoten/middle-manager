@@ -75,3 +75,14 @@ export async function api<T>(path: string, init: RequestInit = {}, token = getTo
   }
   return body as T;
 }
+
+export async function listTasks<T>(includeBody = false): Promise<T[]> {
+  const rows: T[] = [];
+  const fields = includeBody ? '&include_body=1' : '';
+  let page: T[];
+  do {
+    page = await api<T[]>('/tasks?limit=200&offset=' + rows.length + fields);
+    rows.push(...page);
+  } while (page.length === 200);
+  return rows;
+}

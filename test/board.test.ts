@@ -1,7 +1,7 @@
 import { createToken } from '../server/auth.ts';
 import { startServer } from '../server/server.ts';
 import { testConfig } from './helpers.ts';
-import { test, expect } from 'vitest';
+import { test, expect, afterEach, describe, beforeEach } from 'vitest';
 import { memoryDb } from './helpers.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
@@ -115,4 +115,75 @@ test('task HTTP contract combines filters, links runs and protects imported card
     await app.close();
     db.close();
   }
+});
+
+describe('agent task queue', () => {
+  let db: ReturnType<typeof memoryDb>;
+  let app: Awaited<ReturnType<typeof startServer>>;
+  let url: string;
+  beforeEach(async () => {
+    db = memoryDb();
+    app = await startServer({
+      db,
+      config: testConfig(),
+      host: '127.0.0.1',
+      port: 0,
+      retention: false,
+      log: () => {},
+    });
+    url = app.url + '/api/v1/tasks';
+    const insert = db.prepare(
+      "INSERT INTO tasks(title,status,priority,body,created_at,updated_at) VALUES('Work','todo',?,?,datetime('now'),datetime('now'))",
+    );
+    for (let i = 0; i < 8; i++)
+      insert.run(i, i % 2 ? 'Preview\r\n' + 'x'.repeat(50000) : 'z'.repeat(50000));
+  });
+  afterEach(async () => {
+    await app.close();
+    db.close();
+  });
+  const claim = (id: number, name: string, run?: number, query = '') =>
+    fetch(url + '/' + id + '/claim' + query, {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + createToken(db, name).token },
+      body: run ? JSON.stringify({ run_id: run }) : undefined,
+    });
+  test('paginates long bodies with bounded first-line previews', async () => {
+    const page = await (await fetch(url + '?limit=5')).text();
+    expect(Buffer.byteLength(page)).toBeLessThan(20000);
+    const rows = JSON.parse(page);
+    expect(rows).toHaveLength(5);
+    expect(rows[0].body_first_line).toBe('Preview');
+    expect(rows[1].body_first_line).toBe('z'.repeat(256));
+    expect(rows[0]).not.toHaveProperty('body');
+    expect(await (await fetch(url + '?limit=2&offset=5')).json()).toMatchObject([
+      { id: 3 },
+      { id: 2 },
+    ]);
+  });
+  test('rejects unknown query parameters', async () => {
+    for (const path of ['?bogus=1', '/next?bogus=1'])
+      expect((await fetch(url + path)).status).toBe(400);
+    expect((await claim(2, 'unknown-query', undefined, '?bogus=1')).status).toBe(400);
+  });
+  test('selects unblocked cards and commits exactly one concurrent claim with its run', async () => {
+    db.exec(
+      "INSERT INTO task_dependencies VALUES(1,2); INSERT INTO runs(started_at) VALUES(datetime('now'))",
+    );
+    expect((await fetch(url + '/next?project=absent')).status).toBe(204);
+    expect(await (await fetch(url + '/next')).json()).toMatchObject({ id: 2 });
+    expect((await claim(1, 'blocked')).status).toBe(409);
+    const results = await Promise.all([claim(2, 'alpha', 1), claim(2, 'beta', 1)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    const actor = results[0]!.status === 200 ? 'alpha' : 'beta';
+    expect(await (await fetch(url + '/2')).json()).toMatchObject({
+      claimed_by: actor,
+      assignee: actor,
+      status: 'doing',
+      events: [{ actor, kind: 'status' }],
+      runs: [{ id: 1, task_id: 2 }],
+    });
+    db.exec("UPDATE tasks SET status='done' WHERE id=2");
+    expect(await (await fetch(url + '/next')).json()).toMatchObject({ id: 1 });
+  });
 });

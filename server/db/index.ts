@@ -132,6 +132,7 @@ export const COUNTED_TABLES = [
   'plans',
   'plan_readings',
   'tasks',
+  'task_dependencies',
   'task_events',
   'runs',
   'jobs',
