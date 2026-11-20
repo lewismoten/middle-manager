@@ -1,3 +1,4 @@
+import { changesRoute } from './routes/changes.ts';
 import { boardRoutes } from './board/routes.ts';
 // Builds and starts the HTTP server for a loaded config.
 
@@ -61,6 +62,7 @@ export async function startServer(opts: StartOptions): Promise<Running> {
   if (opts.collectorHooks) state.collectorHooks = opts.collectorHooks;
   const handler = createApp(state, [
     ...coreRoutes,
+    changesRoute,
     ...boardRoutes,
     ...planRoutes,
     ...runRoutes,

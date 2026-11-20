@@ -401,7 +401,11 @@ async function boot(): Promise<void> {
     if (!who && getToken()) setToken(null); // revoked or unknown: forget it
     renderSignInButton();
   }
-  route(false);
+  // Overview loads its own panels. Keep its visit summary mounted when config arrives.
+  const tab = tabFromHash(location.hash);
+  if (tab.id === 'overview')
+    document.title = `${tab.title} · ${config?.site.name ?? 'middle-manager'}`;
+  else route(false);
 }
 
 void boot();

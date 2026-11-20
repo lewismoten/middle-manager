@@ -178,6 +178,17 @@ components:
         timeout_s: { type: integer, minimum: 1, maximum: 86400 }
         notify: { type: [string, 'null'], description: Stored only for now }
 paths:
+  /changes:
+    get:
+      summary: Overview changes strictly after the supplied timestamp
+      parameters:
+        - { name: since, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          {
+            description: 'Runs, moved cards, newly failing schedules and plan usage deltas. Each list includes a total and up to 20 items.',
+          }
+        '400': { description: Missing or invalid timestamp }
   /tasks:
     get:
       summary: List cards matching all supplied filters
