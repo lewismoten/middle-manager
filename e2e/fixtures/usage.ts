@@ -14,9 +14,9 @@ export function seedUsage(db: Db, now = new Date()): void {
     { agent_kind: 'claude-code', model: 'small', in: 5200, out: 18_000, cache: 310_000 },
     { agent_kind: 'codex', model: 'medium', in: 9000, out: 12_500, cache: 120_000 },
   ] as const;
-  for (let i = 0; i < 36; i++) {
-    const shape = shapes[i % shapes.length] as (typeof shapes)[number];
-    const startH = 4 + i * 6.5 + (i % 4) * 1.3; // about 10 days back
+  for (let i = 0; i < 44; i++) {
+    const shape = shapes[i < 36 ? i % shapes.length : 2] as (typeof shapes)[number];
+    const startH = 4 + (i % 36) * 6.5 + (i % 4) * 1.3; // about 10 days back
     const lenH = 0.4 + (i % 5) * 0.35;
     const scale = 0.5 + ((i * 7) % 10) / 10;
     const run = startRun(
@@ -25,6 +25,7 @@ export function seedUsage(db: Db, now = new Date()): void {
         machine_id: i % 3 ? 'server-1' : 'laptop-1',
         agent_kind: shape.agent_kind,
         model: shape.model,
+        ...(shape.agent_kind === 'codex' ? { log_ref: `codex:sample-${i}` } : {}),
         role: i % 4 === 0 ? 'orchestrator' : 'agent',
         project_id: 'main',
         prompt: `Sample task ${i + 1}`,
