@@ -3,7 +3,18 @@
 // Linux reads /proc directly; other systems fall back to `ps` (no cwd there).
 
 import { execFile } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  openSync,
+  readSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+} from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentKind, Discovered, Role } from './runs.ts';
@@ -14,6 +25,8 @@ export interface ProcInfo {
   pid: number;
   ppid: number;
   argv: string[];
+  /** Only follow brief paths supplied by processes owned by the scanner account. */
+  readBriefs?: boolean;
   /** argv joined with spaces, as shown to people. */
   command: string;
   cwd: string | null;
@@ -73,6 +86,7 @@ export function listProcProcesses(procRoot = '/proc'): ProcInfo[] {
         pid: Number(name),
         ppid: stat?.ppid ?? 0,
         argv,
+        readBriefs: statSync(dir).uid === process.getuid?.(),
         command: argv.join(' '),
         cwd,
         started_at:
@@ -87,18 +101,21 @@ export function listProcProcesses(procRoot = '/proc'): ProcInfo[] {
   return out;
 }
 
-/** Parses `ps -axo pid=,ppid=,lstart=,command=` (lstart is "Thu Nov 19 10:00:00 2026"). */
+/** Parses `ps -axo pid=,ppid=,uid=,lstart=,command=` (lstart is "Thu Nov 19 10:00:00 2026"). */
 export function parsePs(text: string): ProcInfo[] {
   const out: ProcInfo[] = [];
   for (const line of text.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/.exec(line);
+    const m =
+      /^\s*(\d+)\s+(\d+)\s+(?:(\d+)\s+)?(\w{3}\s+\w{3}\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/.exec(line);
     if (!m) continue;
-    const command = m[4] ?? '';
-    const started = new Date(m[3] ?? '');
+    const command = m[5] ?? '';
+    const started = new Date(m[4] ?? '');
+    const wrapper = /^(\S+)\s+(-\w*c\w*)\s+(.*)$/.exec(command);
     out.push({
       pid: Number(m[1]),
       ppid: Number(m[2]),
-      argv: command.split(/\s+/),
+      argv: wrapper && isShell(wrapper[1]) ? wrapper.slice(1) : command.split(/\s+/),
+      readBriefs: Number(m[3]) === process.getuid?.(),
       command,
       cwd: null,
       started_at: Number.isNaN(started.getTime()) ? null : started.toISOString(),
@@ -109,7 +126,7 @@ export function parsePs(text: string): ProcInfo[] {
 
 export async function listProcesses(): Promise<ProcInfo[]> {
   if (existsSync('/proc/self/stat')) return listProcProcesses();
-  const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,lstart=,command='], {
+  const { stdout } = await run('ps', ['-axo', 'pid=,ppid=,uid=,lstart=,command='], {
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, LC_ALL: 'C' },
   });
@@ -148,23 +165,42 @@ function isShellWrapper(p: ProcInfo): boolean {
 
 const OPERATORS = new Set([';', '&&', '||', '|', '&']);
 
+const CAT_BRIEF =
+  /^\$\(cat[ \t]+(?:--[ \t]+)?(?:"([^"$`\\]+)"|'([^']+)'|([^\s()$`;|&<>"'\\]+))[ \t]*\)/;
+
 /**
  * Splits a command line into words the way a POSIX shell would for our purposes: single and
  * double quotes, backslash escapes (systemd prints ExecStart with escaped spaces) and the
- * operators ; && || | & as words of their own. No expansion is done.
+ * operators ; && || | & as words of their own. Discard redirects and their destinations at this shell layer.
  */
-export function shellWords(text: string): string[] {
+export function shellWords(text: string, briefs?: Map<string, string>): string[] {
   const out: string[] = [];
   let word = '';
   let has = false;
   let quote: '"' | "'" | null = null;
+  let redirectTarget = false;
   const flush = () => {
-    if (has) out.push(word);
+    if (has) {
+      if (!redirectTarget) out.push(word);
+      redirectTarget = false;
+    }
     word = '';
     has = false;
   };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i] as string;
+    if (quote !== "'" && ch === '$' && briefs) {
+      const cat = CAT_BRIEF.exec(text.slice(i));
+      if (cat) {
+        // A NUL cannot occur in argv. Resolve only the reference selected as the agent prompt.
+        const key = `\0brief-${briefs.size}`;
+        briefs.set(key, cat[1] ?? cat[2] ?? cat[3]!);
+        word += key;
+        has = true;
+        i += cat[0].length - 1;
+        continue;
+      }
+    }
     if (quote === "'") {
       if (ch === "'") quote = null;
       else word += ch;
@@ -181,6 +217,13 @@ export function shellWords(text: string): string[] {
       has = true;
     } else if (/\s/.test(ch)) {
       flush();
+    } else if (ch === '>' || ch === '<' || text.startsWith('&>', i)) {
+      // An adjacent file descriptor belongs to the redirect, as does its target word.
+      if (/^\d+$/.test(word)) has = false;
+      flush();
+      const op = /^(?:&>>?|>>?|<)(?:&|\|)?/.exec(text.slice(i))!;
+      i += op[0].length - 1;
+      redirectTarget = true;
     } else if (ch === ';' || ch === '|' || ch === '&') {
       flush();
       const two = text.slice(i, i + 2);
@@ -198,12 +241,16 @@ export function shellWords(text: string): string[] {
 const isShell = (w: string | undefined) => SHELLS.has(path.basename(w ?? '').replace(/^-/, ''));
 
 /** Replaces each `sh -c <script>` script with its words, a few levels deep. */
-export function expandShellScripts(argv: string[], depth = 0): string[] {
+export function expandShellScripts(
+  argv: string[],
+  depth = 0,
+  briefs?: Map<string, string>,
+): string[] {
   if (depth > 4) return argv;
   const out: string[] = [];
   argv.forEach((w, i) => {
     if (i >= 2 && /^-\w*c\w*$/.test(argv[i - 1] ?? '') && isShell(argv[i - 2])) {
-      out.push(...expandShellScripts(shellWords(w), depth + 1));
+      out.push(...expandShellScripts(shellWords(w, briefs), depth + 1, briefs));
     } else out.push(w);
   });
   return out;
@@ -218,8 +265,17 @@ const unquote = (v: string) => v.replace(/^(["'])(.*)\1$/, '$2');
  * own flags count, so `git commit -m msg && claude -p ...` does not read "msg" as a model.
  * Model flags: -m / --model / --model=<m>, and Codex config overrides -c / --config model=<m>.
  */
-export function argvDetails(argv: string[]): { model: string | null; prompt: string | null } {
-  const words = expandShellScripts(argv);
+export function argvDetails(
+  argv: string[] | string,
+  cwd: string | null = null,
+  readBriefs = true,
+): { model: string | null; prompt: string | null } {
+  const briefs = new Map<string, string>();
+  const words = expandShellScripts(
+    typeof argv === 'string' ? shellWords(argv, briefs) : argv,
+    0,
+    briefs,
+  );
   // The command segment (between shell operators) that runs the agent; else every word.
   let seg = words;
   let from = 0;
@@ -251,11 +307,45 @@ export function argvDetails(argv: string[]): { model: string | null; prompt: str
     if ((a === '-p' || a === '--print') && next && !next.startsWith('-')) prompt = next;
   }
   const exec = seg.indexOf('exec', from);
-  if (!prompt && exec >= 0 && /codex/.test(seg.slice(0, exec).join(' '))) {
-    const last = seg[seg.length - 1];
-    if (seg.length - 1 > exec && last && !last.startsWith('-')) prompt = last;
+  const print = seg.includes('-p') || seg.includes('--print');
+  const agent = path.basename(seg[from] ?? '');
+  if (!prompt && ((agent === 'codex' && exec >= 0) || (agent === 'claude' && print))) {
+    const last = seg.at(-1);
+    const before = seg.at(-2) ?? '';
+    const optionValue = [
+      '-m',
+      '--model',
+      '-s',
+      '--sandbox',
+      '-C',
+      '--cd',
+      '-c',
+      '--config',
+      '--permission-mode',
+    ].includes(before);
+    if (last && !last.startsWith('-') && seg.length - 1 > exec && !optionValue) prompt = last;
   }
+  const brief = briefs.get(prompt ?? '');
+  if (brief) prompt = readBriefs ? briefLabel(brief, cwd) : null;
+  else if (prompt?.includes('\0')) prompt = null;
   return { model: model || null, prompt };
+}
+
+function briefLabel(file: string, cwd: string | null): string | null {
+  if (!cwd && !path.isAbsolute(file)) return null;
+  let fd: number | undefined;
+  try {
+    fd = openSync(path.resolve(cwd ?? '/', file), constants.O_RDONLY | constants.O_NONBLOCK);
+    if (!fstatSync(fd).isFile()) return null;
+    const buffer = Buffer.alloc(4096);
+    const count = readSync(fd, buffer, 0, buffer.length, 0);
+    const line = buffer.toString('utf8', 0, count).trim().split(/\r?\n/, 1)[0];
+    return line ? redactSecrets(line).slice(0, 80).trimEnd() : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 export interface Matched {
@@ -395,7 +485,7 @@ export async function discoverProcesses(
   return Promise.all(
     matched.map(async (m): Promise<Discovered> => {
       const g = await git(m.proc.cwd);
-      const { model, prompt } = argvDetails(m.proc.argv);
+      const { model, prompt } = argvDetails(m.proc.argv, m.proc.cwd, m.proc.readBriefs);
       return {
         pid: m.proc.pid,
         command: redactSecrets(m.proc.command).slice(0, 4000),

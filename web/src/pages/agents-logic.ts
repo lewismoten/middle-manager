@@ -204,3 +204,11 @@ export function statusTone(status: string): 'doing' | 'done' | 'block' | 'muted'
   if (status === 'failed') return 'block';
   return 'muted';
 }
+
+export function promptLabel(r: RunView) {
+  return (
+    r.prompt_ref ||
+    r.unit?.replace(/^worker-/, '').replace(/\.service$/, '') ||
+    baseName(r.worktree)
+  );
+}
