@@ -5,6 +5,7 @@ import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
 import { chartLegend, windowChart, type ChartPoint } from '../charts/window-chart.ts';
 import {
+  burnForecastLine,
   fmtDate,
   fmtTime,
   getPace,
@@ -81,7 +82,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
       h('td', { class: 'num' }, pct(w.even_pace_pct)),
       h('td', { class: 'num' }, `${rate(w.rate_pct_per_h)} (${w.rate_basis_h} h)`),
       h('td', { class: 'num' }, rate(w.need_pct_per_h)),
-      h('td', { class: 'num' }, pct(w.projected_pct)),
+      h('td', { class: 'num' }, pct(w.projected_pct), burnForecastLine(w)),
       h('td', {}, w.suggested_model ?? (w.mode === 'stop' ? 'none new' : '—')),
       h('td', { title: fmtDate(w.reset_at, tz) }, w.current ? until(w.reset_at, now) : 'passed'),
       h('td', { title: fmtDate(w.last_reading_at, tz) }, readingAge(w, now)),
@@ -286,6 +287,7 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
         : '',
       ' ',
       readingAge(w, now),
+      burnForecastLine(w),
     ),
     chartLegend([
       { cls: 'used', label: 'Readings' },

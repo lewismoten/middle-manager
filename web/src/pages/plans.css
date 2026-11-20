@@ -17,6 +17,9 @@
 .small {
   font-size: 12px;
 }
+.burn-forecast {
+  display: block;
+}
 .box > .row {
   justify-content: space-between;
 }

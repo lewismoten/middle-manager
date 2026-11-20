@@ -2,8 +2,9 @@
 
 import { api } from './api.ts';
 import { h } from './dom.ts';
+import { burnForecast, type Mode, type WeeklyPace } from './plans-logic.ts';
 
-export type Mode = 'burn' | 'steady' | 'conserve' | 'stop';
+export { pct, type Mode, type WeeklyPace } from './plans-logic.ts';
 
 export interface Reading {
   id: number;
@@ -14,30 +15,6 @@ export interface Reading {
   read_at: string;
   machine_id: string | null;
   how: string | null;
-}
-
-export interface WeeklyPace {
-  current: boolean;
-  start: string;
-  reset_at: string;
-  target_empty_at: string;
-  used_pct: number;
-  even_pace_pct: number;
-  hours_left: number;
-  rate_24h: number;
-  rate_24h_since: string;
-  projected_pct: number;
-  runs_out_at: string | null;
-  mode: Mode;
-  rate_pct_per_h: number;
-  rate_basis_h: number;
-  need_pct_per_h: number;
-  ratio: number | null;
-  suggested_model: string | null;
-  last_reading_at: string;
-  reading_age_h: number;
-  stale: boolean;
-  readings: number;
 }
 
 export interface PlanPace {
@@ -91,8 +68,12 @@ export function modeBadge(mode: Mode): HTMLElement {
   return h('span', { class: `mode mode-${mode}`, title: MODE_TEXT[mode] }, mode);
 }
 
-export const pct = (v: number, digits = 0) => `${v.toFixed(digits)}%`;
 export const rate = (v: number) => `${v.toFixed(2)}%/h`;
+
+export function burnForecastLine(w: WeeklyPace): HTMLElement | null {
+  const text = burnForecast(w);
+  return text === null ? null : h('span', { class: 'burn-forecast small' }, text);
+}
 
 /** "2d 4h", "3h 20m", "12m"; negative spans read "now". */
 export function span(ms: number): string {
