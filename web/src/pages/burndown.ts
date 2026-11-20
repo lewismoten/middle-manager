@@ -841,6 +841,18 @@ function pastWeeksTable(v: WeekView): HTMLElement {
   );
 }
 
+/** A selector that finds the focused control again after the body is rebuilt, if it is in it. */
+function focusSelector(body: HTMLElement): string | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !body.contains(el)) return null;
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  if (el.classList.contains('week-prev')) return '.week-prev';
+  if (el.classList.contains('week-next')) return '.week-next';
+  const week = el.closest('tr[data-week]')?.getAttribute('data-week');
+  if (week && el.tagName === 'BUTTON') return `tr[data-week="${CSS.escape(week)}"] button`;
+  return null;
+}
+
 export function burndownPage(timeZone?: string): HTMLElement {
   const picker = h('div', { class: 'plan-picker', role: 'group', 'aria-label': 'Plan' });
   const body = h(
@@ -982,6 +994,11 @@ export function burndownPage(timeZone?: string): HTMLElement {
         weeklyBox(view),
         isCurrent ? fiveHourBox(plan, timeZone, now) : Promise.resolve(null),
       ]);
+      // A timed refresh rebuilds the body; keep keyboard focus on the control it was on.
+      if (!focusAfter) {
+        const sel = focusSelector(body);
+        if (sel) focusAfter = [sel, sel];
+      }
       body.replaceChildren(
         h(
           'div',
@@ -1013,6 +1030,11 @@ export function burndownPage(timeZone?: string): HTMLElement {
     }
   }
   void load();
-  refreshWhileShown(page, () => void load());
+  refreshWhileShown(page, () => {
+    // A redraw would close an open week or compare list under the reader.
+    const active = document.activeElement;
+    if (active instanceof HTMLSelectElement && body.contains(active)) return;
+    void load();
+  });
   return page;
 }
