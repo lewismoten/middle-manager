@@ -1,13 +1,15 @@
 // A plan window chart: used % over the window with the even-pace line, the projection at the
-// recent rate, the 1 h / 2 h projections, the target-empty marker and a "now" line. A past week
-// adds its final value and the time it ran out; other weeks can be overlaid (aligned by the
-// caller onto this window's time axis). Inline SVG, redrawn on resize, with a hover crosshair
-// that reads out the nearest reading, each overlay's value at that point and where each
-// projection ends.
+// recent rate, the 1 h / 2 h projections, the target-empty marker, the reserve band and a "now"
+// line. A past week adds its final value and the time it ran out; other weeks can be overlaid
+// (aligned by the caller onto this window's time axis). A zoomed view (`view` + `y`) shows part
+// of the window with a fitted y axis, 15-minute ticks, the launch cutoff and the reset. Inline
+// SVG, redrawn on resize, with a hover crosshair that reads out the nearest reading, each
+// overlay's value at that point and where each projection ends.
 
 import { h } from '../dom.ts';
 import { projectionSegment } from './projection-geometry.ts';
 import { spreadLabels, valueAt } from '../pages/past-weeks-logic.ts';
+import { clipLine, quarterTicks, yTicks, type YZoom } from '../pages/final-stretch-logic.ts';
 import { linear, points, responsive, s, fix } from './svg.ts';
 
 const HOUR = 3600_000;
@@ -31,8 +33,24 @@ export interface WindowChartSpec {
    * an inline tag. Elements carry data-proj=<key> so a page can hide one with CSS.
    */
   shortProjections?: ShortLine[];
-  /** When the plan should reach 100% (reset minus the buffer). */
+  /** When the plan should be near empty (reset minus the buffer). */
   targetEmpty?: number;
+  /** Used % to reach at target empty: the even-pace line ends there (default 100 at the reset). */
+  targetPct?: number;
+  /** Shade targetPct..100% as the reserve band. */
+  reserve?: boolean;
+  /** Zoomed time range (default the whole window). */
+  view?: { from: number; to: number };
+  /** Zoomed y range (default 0-100%). */
+  y?: YZoom;
+  /** The readings line when it differs from the dots (clipped to the zoomed range). */
+  linePoints?: ChartPoint[];
+  /** Always draw a dot per reading (default: only when there are 40 or fewer). */
+  dots?: boolean;
+  /** No new launches from this time: a marked rule. */
+  launchCutoff?: number;
+  /** Draw and label the reset (the window's end) as a rule. */
+  resetLine?: boolean;
   /** Draw the readings from 0% at the window start (false for a week whose data starts late). */
   fromZero?: boolean;
   /** A finished week's last reading, marked and labeled with its value. */
@@ -43,7 +61,7 @@ export interface WindowChartSpec {
   overlays?: Overlay[];
   /** Overlays whose key is in here start hidden (legend toggles). */
   hidden?: ReadonlySet<string>;
-  ticks: 'day' | 'hour';
+  ticks: 'day' | 'hour' | 'quarter';
   timeZone?: string;
   height?: number;
 }
@@ -90,6 +108,15 @@ function hourIn(t: number, tz?: string): number {
 
 function ticks(spec: WindowChartSpec, width: number): { t: number; label: string }[] {
   const out: { t: number; label: string }[] = [];
+  if (spec.ticks === 'quarter') {
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: spec.timeZone,
+    });
+    const span = spec.view ?? { from: spec.start, to: spec.end };
+    return quarterTicks(span).map((t) => ({ t, label: fmt.format(new Date(t)) }));
+  }
   const first = Math.ceil(spec.start / HOUR) * HOUR;
   const fmt =
     spec.ticks === 'day'
@@ -121,8 +148,13 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
     const wide = width >= 640;
     const gutter = hasOv ? (wide ? 128 : 74) : 0;
     const m = { l: 40, r: 14 + gutter, t: 18, b: 26 };
-    const x = linear([spec.start, spec.end], [m.l, width - m.r]);
-    const y = linear([0, 100], [height - m.b, m.t]);
+    const x0 = spec.view?.from ?? spec.start;
+    const x1 = spec.view?.to ?? spec.end;
+    const x = linear([x0, x1], [m.l, width - m.r]);
+    const yz = spec.y ?? { lo: 0, hi: 100, zoomed: false, step: 25 };
+    const y = linear([yz.lo, yz.hi], [height - m.b, m.t]);
+    const inX = (t: number) => t >= x0 && t <= x1;
+    const dom = { start: x0, end: x1, now: spec.now };
     const svg = s('svg', {
       width,
       height,
@@ -132,14 +164,17 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
     });
 
     const grid = s('g', { class: 'grid' });
-    for (const v of [0, 25, 50, 75, 100]) {
+    for (const v of yTicks(yz)) {
       grid.append(
         s('line', { x1: m.l, x2: width - m.r, y1: fix(y(v)), y2: fix(y(v)) }),
         s('text', { x: m.l - 6, y: fix(y(v)) + 4, 'text-anchor': 'end' }, `${v}%`),
       );
     }
     const tk = ticks(spec, width);
-    const every = Math.max(1, Math.ceil((tk.length * 44) / (width - m.l - m.r)));
+    // Clock-time labels ("10:45 PM") are wider than day or hour labels.
+    const quarter = spec.ticks === 'quarter';
+    const every = Math.max(1, Math.ceil((tk.length * (quarter ? 64 : 44)) / (width - m.l - m.r)));
+    // A zoomed time axis labels every other tick when they would crowd.
     tk.forEach((tick, i) => {
       grid.append(
         s('line', {
@@ -150,26 +185,77 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
           y2: height - m.b,
         }),
       );
-      if (i % every === 0) {
-        grid.append(s('text', { x: fix(x(tick.t)) + 3, y: height - 8 }, tick.label));
+      const tx = fix(x(tick.t));
+      if (quarter) {
+        // Centered under the tick; skipped where it would run past either end of the plot.
+        if (i % every === 0 && tx - 28 >= m.l - 8 && tx + 28 <= width - m.r + 8) {
+          grid.append(s('text', { x: tx, y: height - 8, 'text-anchor': 'middle' }, tick.label));
+        }
+      } else if (i % every === 0) {
+        grid.append(s('text', { x: tx + 3, y: height - 8 }, tick.label));
       }
     });
     svg.append(grid);
 
-    // Even pace: 0% at the start to 100% at the reset.
-    svg.append(
-      s('line', {
-        class: 'even',
-        x1: x(spec.start),
-        y1: y(0),
-        x2: x(spec.end),
-        y2: y(100),
-      }),
-    );
+    if (yz.lo > 0) {
+      // Axis break: the y axis does not start at 0.
+      const by = height - m.b;
+      grid.append(
+        s('path', {
+          class: 'axis-break',
+          d: `M${m.l - 5},${by - 1} l10,-4 M${m.l - 5},${by + 3} l10,-4`,
+        }),
+      );
+    }
 
-    if (spec.targetEmpty !== undefined && spec.targetEmpty > spec.start) {
+    // The reserve: target % to 100%, kept for the lead and the final-hour jobs.
+    const targetPct = spec.targetPct ?? 100;
+    if (spec.reserve && targetPct < 100 && yz.hi > targetPct) {
+      const top = fix(y(100));
+      const bottom = fix(y(Math.max(targetPct, yz.lo)));
+      const tall = bottom - top >= 14;
+      svg.append(
+        s('rect', {
+          class: 'reserve',
+          x: m.l,
+          y: top,
+          width: Math.max(0, width - m.l - m.r),
+          height: Math.max(0, bottom - top),
+        }),
+        s(
+          'text',
+          { class: 'reserve-label', x: m.l + 4, y: tall ? (top + bottom) / 2 + 4 : bottom + 11 },
+          `Reserve ${Math.round(targetPct)}–100%`,
+        ),
+      );
+    }
+
+    // Even pace: 0% at the start to the target % at target empty (flat to the reset), or to
+    // 100% at the reset when no target is given.
+    const evenPts =
+      spec.targetEmpty !== undefined && spec.targetPct !== undefined
+        ? [
+            { t: spec.start, used: 0 },
+            { t: spec.targetEmpty, used: targetPct },
+            ...(spec.end > spec.targetEmpty ? [{ t: spec.end, used: targetPct }] : []),
+          ]
+        : [
+            { t: spec.start, used: 0 },
+            { t: spec.end, used: 100 },
+          ];
+    const evenIn = clipLine(evenPts, { from: x0, to: x1 });
+    if (evenIn.length >= 2) {
+      svg.append(
+        s('polyline', {
+          class: 'even',
+          points: points(evenIn.map((q): [number, number] => [x(q.t), y(q.used)])),
+        }),
+      );
+    }
+
+    if (spec.targetEmpty !== undefined && spec.targetEmpty > spec.start && inX(spec.targetEmpty)) {
       const tx = fix(x(spec.targetEmpty));
-      const ty = fix(y(100));
+      const ty = fix(y(targetPct));
       svg.append(
         s('line', { class: 'target-rule', x1: tx, x2: tx, y1: ty, y2: height - m.b }),
         s('path', {
@@ -184,7 +270,27 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
       );
     }
 
-    if (spec.now > spec.start && spec.now < spec.end) {
+    // Launch cutoff and reset rules, labeled at the top on two rows so they never collide.
+    if (spec.launchCutoff !== undefined && inX(spec.launchCutoff)) {
+      const cx = fix(x(spec.launchCutoff));
+      svg.append(
+        s('line', { class: 'cutoff-rule', x1: cx, x2: cx, y1: m.t, y2: height - m.b }),
+        s(
+          'text',
+          { class: 'cutoff-label', x: cx - 4, y: m.t + 24, 'text-anchor': 'end' },
+          'launch cutoff',
+        ),
+      );
+    }
+    if (spec.resetLine && inX(spec.end)) {
+      const rx = fix(x(spec.end));
+      svg.append(
+        s('line', { class: 'reset-rule', x1: rx, x2: rx, y1: m.t, y2: height - m.b }),
+        s('text', { class: 'reset-label', x: rx - 4, y: m.t + 10, 'text-anchor': 'end' }, 'reset'),
+      );
+    }
+
+    if (spec.now > spec.start && spec.now < spec.end && spec.now > x0 && spec.now < x1) {
       const nx = fix(x(spec.now));
       svg.append(
         s('line', { class: 'now', x1: nx, x2: nx, y1: m.t - 6, y2: height - m.b }),
@@ -242,7 +348,7 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
     const pts = spec.points;
     const last = pts[pts.length - 1];
     const p = spec.projection;
-    const seg = last && p ? projectionSegment(spec, last.used, p) : null;
+    const seg = last && p ? projectionSegment(dom, last.used, p) : null;
     if (seg) {
       svg.append(
         s('line', {
@@ -259,7 +365,7 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
     }
 
     const shorts = last ? (spec.shortProjections ?? []) : [];
-    const segs = shorts.map((sp) => projectionSegment(spec, (last as ChartPoint).used, sp));
+    const segs = shorts.map((sp) => projectionSegment(dom, (last as ChartPoint).used, sp));
     // The higher end gets its tag above, the lower below, so close ends stay legible.
     const highest = Math.max(...segs.map((g) => (g ? g.used1 : -1)));
     shorts.forEach((sp, i) => {
@@ -294,16 +400,18 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
       svg.append(group);
     });
 
-    if (pts.length) {
-      const line: [number, number][] = [
-        ...(spec.fromZero === false ? [] : [[x(spec.start), y(0)] as [number, number]]),
-        ...pts.map((p): [number, number] => [
-          x(Math.min(Math.max(p.t, spec.start), spec.end)),
-          y(p.used),
-        ]),
-      ];
-      svg.append(s('polyline', { class: 'used', points: points(line) }));
-      if (pts.length <= 40) {
+    if (pts.length || spec.linePoints?.length) {
+      const line: [number, number][] = spec.linePoints
+        ? spec.linePoints.map((p): [number, number] => [x(p.t), y(p.used)])
+        : [
+            ...(spec.fromZero === false ? [] : [[x(spec.start), y(0)] as [number, number]]),
+            ...pts.map((p): [number, number] => [
+              x(Math.min(Math.max(p.t, spec.start), spec.end)),
+              y(p.used),
+            ]),
+          ];
+      if (line.length) svg.append(s('polyline', { class: 'used', points: points(line) }));
+      if (spec.dots || pts.length <= 40) {
         const dots = s('g', { class: 'dots' });
         for (const p of pts)
           dots.append(s('circle', { cx: fix(x(p.t)), cy: fix(y(p.used)), r: 3.5 }));

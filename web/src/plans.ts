@@ -5,7 +5,8 @@ import type { WindowSummary } from './pages/past-weeks-logic.ts';
 import { h } from './dom.ts';
 import {
   burnForecast,
-  paceDifference,
+  offPace,
+  pct,
   shortOutcome,
   shortProjections,
   type Mode,
@@ -14,9 +15,11 @@ import {
 
 export {
   pct,
+  signed,
   shortOutcome,
   shortProjections,
   type Mode,
+  type Phase,
   type ShortProjection,
   type WeeklyPace,
 } from './plans-logic.ts';
@@ -38,6 +41,8 @@ export interface PlanPace {
   provider: string;
   empty_buffer_hours: number;
   window_hours?: number;
+  empty_target_pct?: number;
+  launch_cutoff_min?: number;
   models: string[];
   weekly: WeeklyPace | null;
   five_hour: Reading | null;
@@ -88,10 +93,11 @@ export const getReadings = (id: string, q: Record<string, string>) =>
   );
 
 export const MODE_TEXT: Record<Mode, string> = {
-  burn: 'Burn: use more, the plan will not run out in time',
-  steady: 'Steady: on pace to run out just before the reset',
-  conserve: 'Conserve: slow down, the plan would run out early',
-  stop: 'Stop: nearly spent, finish what is running',
+  burn: 'Burn: use more, the plan will not reach its target in time',
+  steady: 'Steady: on pace to be near empty an hour before the reset',
+  conserve: 'Conserve: slow down, ahead of the even-pace line or the plan would run out early',
+  finish: 'Finish: final hour, short jobs only that end before the reset; the lead keeps running',
+  stop: 'Stop: no new workers (reserve reached or past the launch cutoff); the lead keeps running',
 };
 
 export function modeBadge(mode: Mode): HTMLElement {
@@ -103,9 +109,18 @@ export const rate = (v: number) => `${v.toFixed(2)}%/h`;
 export const recentRateLabel = (w: WeeklyPace) =>
   `${rate(w.rate_pct_per_h)} (last ${w.rate_basis_h} h)`;
 
-export function paceDifferenceLine(w: WeeklyPace): HTMLElement | null {
-  const text = paceDifference(w);
-  return text === null ? null : h('span', { class: 'pace-difference' }, text);
+/** "Off pace: −10.8 pts" against the even-pace line now. */
+export function offPaceLine(w: WeeklyPace): HTMLElement | null {
+  const text = offPace(w);
+  if (text === null) return null;
+  return h(
+    'span',
+    {
+      class: 'off-pace',
+      title: `Used ${pct(w.used_pct, 1)} against even pace ${pct(w.even_pace_pct, 1)} (0% at the window start to ${pct(w.empty_target_pct ?? 97)} at target empty)`,
+    },
+    text,
+  );
 }
 
 export function burnForecastLine(w: WeeklyPace): HTMLElement | null {

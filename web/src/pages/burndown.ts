@@ -3,6 +3,9 @@
 // time since window start), the 5-hour window when the plan reports one, a past-weeks table and
 // a pacing table for every plan. The picked week and comparison live in the URL
 // (#/burndown?plan=&week=&compare=&avg=); the comparison is also remembered in localStorage.
+// For the current week a view switch zooms into the final stretch: the last 2 h of readings and
+// the next 2 h of projections (view=stretch in the URL, remembered once chosen; it opens by
+// itself when the reset is under 3 h away and no choice has been made).
 
 import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
@@ -15,7 +18,7 @@ import {
 } from '../charts/window-chart.ts';
 import {
   burnForecastLine,
-  paceDifferenceLine,
+  offPaceLine,
   recentRateLabel,
   fmtDate,
   fmtTime,
@@ -24,9 +27,11 @@ import {
   getWindow,
   getWindows,
   modeBadge,
+  MODE_TEXT,
   pct,
   rate,
   readingAge,
+  signed,
   refreshWhileShown,
   shortOutcome,
   shortProjections,
@@ -60,6 +65,20 @@ import {
   type Span,
   type WindowSummary,
 } from './past-weeks-logic.ts';
+import {
+  clipLine,
+  evenLine,
+  parseView,
+  pickView,
+  projectTo,
+  readAgo,
+  stretchRange,
+  stretchStale,
+  valueOn,
+  yZoom,
+  type BurndownView,
+  type SeriesPoint as StretchPoint,
+} from './final-stretch-logic.ts';
 import './plans.css';
 
 const PLAN_KEY = 'mm.burndown.plan';
@@ -83,6 +102,25 @@ function saveShort(key: string, shown: boolean): void {
   }
 }
 const HOUR = 3600_000;
+const VIEW_KEY = 'mm.burndown.view';
+/** Readings the week view asks for at most (thinned on the server); the zoomed view gets all. */
+const WEEK_MAX_POINTS = 800;
+
+function savedView(): BurndownView | null {
+  try {
+    return parseView(localStorage.getItem(VIEW_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveView(view: BurndownView): void {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 function savedPlan(): string | null {
   try {
@@ -113,6 +151,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
     'Mode',
     'Used',
     'Even pace',
+    'Off pace',
     'Recent rate',
     'Needed rate',
     'Projected',
@@ -136,7 +175,12 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
       h('th', { scope: 'row' }, p.name),
       h('td', {}, modeBadge(w.mode)),
       h('td', { class: 'num' }, pct(w.used_pct, 1)),
-      h('td', { class: 'num' }, pct(w.even_pace_pct)),
+      h('td', { class: 'num' }, pct(w.even_pace_pct, 1)),
+      h(
+        'td',
+        { class: 'num' },
+        w.off_pace_pts === undefined ? '—' : `${signed(w.off_pace_pts)} pts`,
+      ),
       h('td', { class: 'num' }, recentRateLabel(w)),
       h('td', { class: 'num' }, rate(w.need_pct_per_h)),
       h('td', { class: 'num' }, pct(w.projected_pct), burnForecastLine(w)),
@@ -162,7 +206,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
             'tr',
             {},
             ...head.map((x, i) =>
-              h('th', { scope: 'col', class: i >= 2 && i <= 6 ? 'num' : null }, x),
+              h('th', { scope: 'col', class: i >= 2 && i <= 7 ? 'num' : null }, x),
             ),
           ),
         ),
@@ -172,7 +216,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
     h(
       'p',
       { class: 'muted small' },
-      'Target: each plan runs out just before its reset (reset minus the buffer). Burn = recent rate under 75% of needed; conserve = over 125%; stop = 97% used. Burn suggests the top model rung, conserve the bottom.',
+      'Target: each plan is near empty (97% by default) at target empty, an hour before its reset; the rest is a reserve for the lead and the final hour. Even pace runs from 0% at the window start to that target. During the week the needed rate gets back onto the even-pace line within 24 h; in the last 24 h it aims straight at the target. Burn = recent rate under 75% of needed; conserve = over 125%, or 5+ points ahead of even pace during the week; finish = the final hour, short jobs only; stop = no new workers from 30 minutes before the reset, at 99% used, or at the target before target empty (the lead keeps running). Burn suggests the top model rung, conserve and finish the bottom.',
     ),
   );
 }
@@ -294,6 +338,10 @@ interface WeekView {
   state: BurndownState;
   tz: string | undefined;
   now: number;
+  /** Week or final-stretch chart for the current week, and why it is the one shown. */
+  view: BurndownView;
+  viewSource: 'url' | 'stored' | 'auto';
+  setView: (view: BurndownView) => void;
   /** Show a week; `focus` lists selectors to focus after the redraw (first enabled wins). */
   go: (week: string, focus?: [string, string]) => void;
   set: (patch: Partial<BurndownState>, focus?: [string, string]) => void;
@@ -390,13 +438,15 @@ function weekControls(v: WeekView): HTMLElement {
   });
   avg.addEventListener('change', () => v.set({ avg: avg.checked }, ['#week-avg', '#week-avg']));
 
+  const stretch = v.view === 'stretch' && canStretch(v);
   return h(
     'div',
     { class: 'week-controls' },
     h('div', { class: 'week-nav', role: 'group', 'aria-label': 'Week' }, prev, pick, next),
+    canStretch(v) ? viewSwitch(v) : null,
     h(
       'div',
-      { class: 'week-compare' },
+      { class: 'week-compare', hidden: stretch },
       h('label', { for: 'week-compare' }, 'Compare with'),
       compare,
       h(
@@ -411,6 +461,33 @@ function weekControls(v: WeekView): HTMLElement {
         ' Average of past weeks',
       ),
     ),
+  );
+}
+
+/** The zoomed view is for the current week while its window is still open. */
+const canStretch = (v: WeekView) => v.isCurrent && !!v.plan.weekly?.current;
+
+/** "Week | Last 2 h + next 2 h": two toggle buttons (one pressed). */
+function viewSwitch(v: WeekView): HTMLElement {
+  const button = (view: BurndownView, label: string) => {
+    const b = h(
+      'button',
+      {
+        type: 'button',
+        id: `view-${view}`,
+        class: 'view-btn',
+        'aria-pressed': String(v.view === view),
+      },
+      label,
+    );
+    b.addEventListener('click', () => v.setView(view));
+    return b;
+  };
+  return h(
+    'div',
+    { class: 'view-switch', role: 'group', 'aria-label': 'Chart range' },
+    button('week', 'Week'),
+    button('stretch', 'Last 2 h + next 2 h'),
   );
 }
 
@@ -538,6 +615,7 @@ function weeklyHeader(v: WeekView): HTMLElement {
 }
 
 async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
+  if (v.view === 'stretch' && canStretch(v)) return stretchWeekly(v, box);
   const p = v.plan;
   const w = p.weekly as WeeklyPace;
   const { tz, now } = v;
@@ -547,6 +625,10 @@ async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
     getReadings(p.plan, {
       window: 'weekly',
       since: new Date(start - 3 * HOUR).toISOString(),
+      reset: w.reset_at,
+      limit: '10000',
+      // A week of 5-minute readings is thousands of points; the chart is a few hundred px wide.
+      max_points: String(WEEK_MAX_POINTS),
     }),
     buildOverlays(v, { start, end }),
   ]);
@@ -578,7 +660,7 @@ async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
         { title: `Since ${fmtDate(w.rate_24h_since, tz)}` },
         ` · Last 24 h: ${rate(w.rate_24h)}.`,
       ),
-      paceDifferenceLine(w),
+      offPaceLine(w),
       burnForecastLine(w),
       shortProjectionsLine(w, tz),
     ),
@@ -601,6 +683,7 @@ async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
         };
       }),
       { cls: 'target', label: `Target empty (${p.empty_buffer_hours} h before reset)` },
+      { cls: 'reserve', label: `Reserve (${pct(targetPctOf(p))}–100%)` },
       { cls: 'now', label: 'Now' },
       ...ov.legend,
     ]),
@@ -627,6 +710,8 @@ async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
           readout: `Last ${sp.window_h} h: ${shortOutcome(sp, (iso) => fmtTime(iso, tz))}`,
         })),
       targetEmpty: new Date(w.target_empty_at).getTime(),
+      targetPct: targetPctOf(p),
+      reserve: true,
       overlays: ov.overlays,
       hidden: hiddenOverlays,
       ticks: 'day',
@@ -634,6 +719,253 @@ async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
     }),
     ...overlayNotes(ov.notes),
   );
+}
+
+/** The plan's target at target empty (97% unless configured). */
+const targetPctOf = (p: PlanPace) => p.weekly?.empty_target_pct ?? p.empty_target_pct ?? 97;
+
+interface StretchLine {
+  key: string;
+  name: string;
+  rate: number;
+}
+
+/**
+ * The final stretch: readings over the last 2 h and projections over the next 2 h (clipped to
+ * the window), on a y axis fitted to what is shown, with a readout of the newest reading and
+ * where each projection lands at target empty and at the reset.
+ */
+async function stretchWeekly(v: WeekView, box: HTMLElement): Promise<void> {
+  const p = v.plan;
+  const w = p.weekly as WeeklyPace;
+  const { tz, now } = v;
+  const start = Date.parse(w.start);
+  const end = Date.parse(w.reset_at);
+  const target = Date.parse(w.target_empty_at);
+  const targetPct = targetPctOf(p);
+  const cutoff = w.launch_cutoff_at
+    ? Date.parse(w.launch_cutoff_at)
+    : end - (p.launch_cutoff_min ?? 30) * 60_000;
+  const span = stretchRange(now, start, end);
+  // Every reading (never thinned) from a little before the range, for the line's entry point.
+  const rs = await getReadings(p.plan, {
+    window: 'weekly',
+    since: new Date(span.from - 3 * HOUR).toISOString(),
+    reset: w.reset_at,
+    limit: '10000',
+  });
+  const all = toPoints(
+    rs.readings.filter((x) => x.resets_at && Math.abs(Date.parse(x.resets_at) - end) < 3 * HOUR),
+  ).sort((a, b) => a.t - b.t);
+  const shownPts = all.filter((q) => q.t >= span.from && q.t <= span.to);
+  const base: StretchPoint[] = all.some((q) => q.t <= start)
+    ? all
+    : [{ t: start, used: 0 }, ...all];
+  const line = clipLine(base, span);
+  const even = evenLine(start, target, end, targetPct);
+  const used = w.used_pct;
+
+  const lines: StretchLine[] = [
+    { key: 'main', name: `Last ${w.rate_basis_h} h (mode)`, rate: w.rate_pct_per_h },
+    ...shortProjections(w)
+      .filter((sp) => sp.rate_pct_per_h !== null)
+      .map((sp) => ({
+        key: `${sp.window_h}h`,
+        name: `Last ${sp.window_h} h`,
+        rate: sp.rate_pct_per_h as number,
+      })),
+  ];
+  const ends = new Map(lines.map((l) => [l.key, projectTo(used, l.rate, now, span.to)]));
+  const yz = yZoom([
+    ...shownPts.map((q) => q.used),
+    ...line.map((q) => q.used),
+    ...[span.from, span.to, target]
+      .filter((t) => t >= span.from && t <= span.to)
+      .map((t) => valueOn(even, t) ?? NaN),
+    ...[...ends.values()].map((e) => e.used),
+    used,
+  ]);
+
+  const time = (t: number) => fmtTime(new Date(t).toISOString(), tz);
+  /** "10:41 PM": the zoomed view spans hours, so the weekday is left out. */
+  const clock = (t: number) =>
+    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(
+      new Date(t),
+    );
+  const at = (l: StretchLine, t: number) => {
+    if (t < now) return 'passed';
+    const e = projectTo(used, l.rate, now, t);
+    return e.runsOut && e.t < t ? `runs out ${time(e.t)}` : pct(e.used, 1);
+  };
+  const age = now - Date.parse(w.last_reading_at);
+  const stale = stretchStale(age);
+  const shown = savedShort();
+  for (const l of lines)
+    if (l.key !== 'main' && shown[l.key] === false) box.classList.add(`hide-proj-${l.key}`);
+  const axisText = yz.zoomed
+    ? `Y axis zoomed to ${yz.lo}–${yz.hi}% used (not from 0%), so small slopes show.`
+    : 'Y axis 0–100% used.';
+
+  box.append(
+    h(
+      'div',
+      { class: 'stretch-readout' },
+      h(
+        'p',
+        { class: 'stretch-reading' },
+        `Last reading ${time(Date.parse(w.last_reading_at))} · ${readAgo(age)}`,
+        stale
+          ? h(
+              'span',
+              {
+                class: 'stale-badge',
+                title: 'The newest reading is over 15 minutes old; the collectors run every 5.',
+              },
+              h('span', { 'aria-hidden': 'true' }, '⚠ '),
+              `Reading ${Math.round(age / 60_000)} min old`,
+            )
+          : null,
+        ' · Used ',
+        h('b', {}, pct(used, 1)),
+        offPaceLine(w) ? ' · ' : '',
+        offPaceLine(w),
+        ' · ',
+        h('span', { title: MODE_TEXT[w.mode] }, `Mode ${w.mode}`),
+      ),
+      h(
+        'p',
+        { class: 'stretch-rates small' },
+        lines
+          .map((l) => `${l.name}: ${rate(l.rate)}`)
+          .concat(
+            shortProjections(w)
+              .filter((sp) => sp.rate_pct_per_h === null)
+              .map((sp) => `Last ${sp.window_h} h: ${sp.reason_text ?? 'not enough readings'}`),
+          )
+          .join(' · '),
+      ),
+      h(
+        'div',
+        { class: 'table-scroll' },
+        h(
+          'table',
+          { class: 'data stretch-table' },
+          h(
+            'thead',
+            {},
+            h(
+              'tr',
+              {},
+              h('th', { scope: 'col' }, 'Projection'),
+              h(
+                'th',
+                { scope: 'col', class: 'num' },
+                'At target empty ',
+                h('span', { class: 'when' }, clock(target)),
+              ),
+              h(
+                'th',
+                { scope: 'col', class: 'num' },
+                'At reset ',
+                h('span', { class: 'when' }, clock(end)),
+              ),
+            ),
+          ),
+          h(
+            'tbody',
+            {},
+            ...lines.map((l) =>
+              h(
+                'tr',
+                { 'data-line': l.key },
+                h('th', { scope: 'row' }, l.name),
+                h('td', { class: 'num' }, at(l, target)),
+                h('td', { class: 'num' }, at(l, end)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+    chartLegend([
+      { cls: 'used', label: 'Readings' },
+      { cls: 'even', label: `Even pace (to ${pct(targetPct)})` },
+      { cls: 'proj', label: `Projection (last ${w.rate_basis_h} h)` },
+      ...lines
+        .filter((l) => l.key !== 'main')
+        .map((l) => ({
+          cls: `proj-${l.key}`,
+          label: `${l.name} rate`,
+          toggle: {
+            pressed: shown[l.key] !== false,
+            onToggle: (on: boolean) => {
+              box.classList.toggle(`hide-proj-${l.key}`, !on);
+              saveShort(l.key, on);
+            },
+          },
+        })),
+      { cls: 'target', label: 'Target empty' },
+      { cls: 'reserve', label: `Reserve (${pct(targetPct)}–100%)` },
+      { cls: 'cutoff', label: 'Launch cutoff' },
+      { cls: 'now', label: 'Now' },
+    ]),
+    h('p', { class: `axis-note small${yz.zoomed ? ' zoomed' : ''}` }, axisText),
+    windowChart({
+      label: `${p.name}, last 2 h and next 2 h: ${pct(used, 1)} used at ${time(Date.parse(w.last_reading_at))}. ${axisText}`,
+      start,
+      end,
+      now,
+      view: span,
+      y: yz,
+      points: shownPts,
+      linePoints: line,
+      dots: true,
+      projection: projectionEnd(lines[0] as StretchLine, ends, tz),
+      shortProjections: lines.slice(1).map((l) => {
+        const e = ends.get(l.key) as ReturnType<typeof projectTo>;
+        return {
+          key: l.key,
+          tag: l.key.replace('h', ' h'),
+          t: e.t,
+          used: e.used,
+          runsOut: e.runsOut,
+          readout: `${l.name}: ${e.runsOut ? `runs out ${time(e.t)}` : `${pct(e.used, 1)} at ${time(e.t)}`}`,
+        };
+      }),
+      targetEmpty: target,
+      targetPct,
+      reserve: true,
+      launchCutoff: cutoff,
+      resetLine: true,
+      ticks: 'quarter',
+      timeZone: tz,
+      height: 280,
+    }),
+  );
+  if (v.viewSource === 'auto') {
+    box.append(
+      h(
+        'p',
+        { class: 'muted small auto-note' },
+        'Zoomed in because the reset is under 3 h away. Pick Week above to see the whole week.',
+      ),
+    );
+  }
+}
+
+function projectionEnd(
+  l: StretchLine,
+  ends: Map<string, ReturnType<typeof projectTo>>,
+  tz: string | undefined,
+) {
+  const e = ends.get(l.key) as ReturnType<typeof projectTo>;
+  const when = fmtTime(new Date(e.t).toISOString(), tz);
+  return {
+    t: e.t,
+    used: e.used,
+    runsOut: e.runsOut,
+    readout: `${l.name}: ${e.runsOut ? `runs out ${when}` : `${pct(e.used, 1)} at ${when}`}`,
+  };
 }
 
 /** "On target." / "7 pts unused against the target (empty 1 h before the reset)." */
@@ -707,6 +1039,8 @@ async function pastWeekly(v: WeekView, box: HTMLElement): Promise<void> {
       final: { t: Date.parse(w.last_reading_at), used: w.final_pct },
       ranOut,
       targetEmpty: Date.parse(w.target_empty_at),
+      targetPct: targetPctOf(v.plan),
+      reserve: true,
       overlays: ov.overlays,
       hidden: hiddenOverlays,
       ticks: 'day',
@@ -866,6 +1200,7 @@ export function burndownPage(timeZone?: string): HTMLElement {
     week: fromUrl.week ?? 'current',
     compare: fromUrl.compare ?? stored.compare,
     avg: fromUrl.avg ?? stored.avg,
+    view: fromUrl.view ?? null,
   };
   let busy = false;
   let again = false;
@@ -876,7 +1211,7 @@ export function burndownPage(timeZone?: string): HTMLElement {
 
   function writeUrl() {
     if (!location.hash.startsWith('#/burndown')) return;
-    const plain = state.week === 'current' && state.compare === 'none' && !state.avg;
+    const plain = state.week === 'current' && state.compare === 'none' && !state.avg && !state.view;
     const want = stateHash({
       ...state,
       plan: plain && state.plan === firstPlan ? null : state.plan,
@@ -887,6 +1222,15 @@ export function burndownPage(timeZone?: string): HTMLElement {
   function go(week: string, focus?: [string, string]) {
     if (focus) focusAfter = focus;
     state.week = week;
+    writeUrl();
+    void load();
+  }
+
+  /** The reader picked a chart range: it wins from now on (URL and localStorage). */
+  function setView(view: BurndownView) {
+    focusAfter = [`#view-${view}`, `#view-${view}`];
+    state.view = view;
+    saveView(view);
     writeUrl();
     void load();
   }
@@ -985,6 +1329,12 @@ export function burndownPage(timeZone?: string): HTMLElement {
       const order = ['current', ...windows.filter((w) => !w.current).map((w) => w.id)];
       const at = isCurrent ? 0 : order.indexOf(state.week);
       nav = { older: order[at + 1], newer: at > 0 ? order[at - 1] : undefined };
+      const picked = pickView({
+        url: state.view,
+        stored: savedView(),
+        reset: isCurrent && plan.weekly?.current ? Date.parse(plan.weekly.reset_at) : null,
+        now,
+      });
       const view: WeekView = {
         plan,
         windows,
@@ -993,6 +1343,9 @@ export function burndownPage(timeZone?: string): HTMLElement {
         state,
         tz: timeZone,
         now,
+        view: picked.view,
+        viewSource: picked.source,
+        setView,
         go,
         set,
       };

@@ -1,19 +1,48 @@
 // Weekly burndown and pacing (SPEC 7). A line-for-line port of the reference Python
-// implementation (window selection, 24 h rate, projection, recent rate, mode), kept identical on
-// the same readings; test/pacing.test.ts checks it against values produced by the reference.
-// The product forecast in pace() uses the mode rate. analyse() retains the reference 24 h forecast.
+// implementation (window selection, 24 h rate, projection, recent rate, pacing policy), kept
+// identical on the same readings; test/pacing.test.ts checks it against values produced by the
+// reference. The product forecast in pace() uses the mode rate. analyse() retains the reference
+// 24 h forecast.
 
 export const HOUR_MS = 3600_000;
 export const WEEK_MS = 7 * 24 * HOUR_MS;
 /** Readings whose reset is within this of the window's reset belong to the same window. */
 const SAME_RESET_MS = 3 * HOUR_MS;
-export const STOP_AT_PCT = 97;
 export const BURN_BELOW = 0.75;
 export const CONSERVE_ABOVE = 1.25;
 /** A reading older than this is shown as stale. */
 export const STALE_AFTER_H = 2;
 
-export type Mode = 'burn' | 'steady' | 'conserve' | 'stop';
+// Pacing policy. The target at target empty (reset - empty_buffer_hours) is NEAR empty, not
+// 100%: the last few % are a reserve for the lead agent and the final-hour jobs.
+/** Used % to reach at target empty (config plans[].empty_target_pct). */
+export const EMPTY_TARGET_PCT = 97;
+/** No new workers at all past this used %. */
+export const HARD_STOP_PCT = 99;
+/** During the week, get back onto the even-pace line within this many hours. */
+export const RECOVER_H = 24;
+/** The last this-many hours before target empty aim straight at the target. */
+export const FINAL_H = 24;
+/** No new launches this many minutes before the reset (config plans[].launch_cutoff_min). */
+export const LAUNCH_CUTOFF_MIN = 30;
+/** Points ahead of the even-pace line (during the week) before the mode says conserve. */
+export const AHEAD_BAND = 5;
+
+/**
+ * stop = no new workers (the lead keeps running); finish = final hour, short jobs only.
+ */
+export type Mode = 'burn' | 'steady' | 'conserve' | 'finish' | 'stop';
+/** week = follow the even line; final = last FINAL_H h, aim at the target; final-hour = after it. */
+export type Phase = 'week' | 'final' | 'final-hour';
+
+export interface PacePolicy {
+  /** Hours before the reset the plan should be near empty (default 1). */
+  emptyBufferHours?: number;
+  /** Used % to reach at target empty (default 97). */
+  emptyTargetPct?: number;
+  /** Minutes before the reset after which nothing new launches (default 30). */
+  launchCutoffMin?: number;
+}
 
 export interface Reading {
   /** ISO time the number was read. */
@@ -63,7 +92,14 @@ export interface Pace {
   projected: number;
   hit: number | null;
   mode: Mode;
+  phase: Phase;
   used_pct: number;
+  /** Even pace now: 0% at the window start to empty_target_pct at target empty. */
+  even_pace: number;
+  /** Used minus even pace, % points (+ = ahead of the line, using faster). */
+  off_pace: number;
+  empty_target_pct: number;
+  launch_cutoff_at: number;
   rate: number;
   rate_basis_h: 3 | 24;
   need: number;
@@ -170,29 +206,78 @@ export function recentRate(a: Analysis): { rate: number; basis: 3 | 24 } {
   return { rate: a.rate, basis: 24 };
 }
 
-export function pace(a: Analysis, now: number, emptyBufferHours = 1): Pace {
-  const targetEnd = a.end - emptyBufferHours * HOUR_MS;
-  const hours = Math.max(0.25, (targetEnd - now) / HOUR_MS);
-  const need = Math.max(0, (100 - a.used) / hours);
+/** The even-pace line at time t: 0% at `start` to `targetPct` at `targetEnd`, flat after. */
+export function evenLine(
+  start: number,
+  targetEnd: number,
+  t: number,
+  targetPct = EMPTY_TARGET_PCT,
+) {
+  const span = targetEnd - start;
+  const f = span > 0 ? Math.min(1, Math.max(0, (t - start) / span)) : 1;
+  return targetPct * f;
+}
+
+/**
+ * The mode for a plan now (reference pace()). During the week the target is the even-pace line,
+ * recovered within RECOVER_H hours; the last FINAL_H hours before target empty aim straight at
+ * empty_target_pct; the final hour (target empty to reset) is "finish". "stop" (no new workers;
+ * never the lead) applies from the launch cutoff, at HARD_STOP_PCT used, or once the target is
+ * reached before target empty. `policy` may be a number: the empty buffer in hours.
+ */
+export function pace(a: Analysis, now: number, policy: number | PacePolicy = {}): Pace {
+  const pol = typeof policy === 'number' ? { emptyBufferHours: policy } : policy;
+  const bufferH = pol.emptyBufferHours ?? 1;
+  const emptyPct = pol.emptyTargetPct ?? EMPTY_TARGET_PCT;
+  const cutoffMin = pol.launchCutoffMin ?? LAUNCH_CUTOFF_MIN;
+  const end = a.end;
+  const start = a.start;
+  const targetEnd = end - bufferH * HOUR_MS;
+  const used = a.used;
   const { rate, basis } = recentRate(a);
+  const evenNow = evenLine(start, targetEnd, now, emptyPct);
+  const toTargetH = (targetEnd - now) / HOUR_MS;
+  let phase: Phase;
+  let need: number;
+  if (toTargetH <= 0) {
+    phase = 'final-hour';
+    need = 0;
+  } else if (toTargetH <= FINAL_H) {
+    phase = 'final';
+    need = Math.max(0, (emptyPct - used) / Math.max(0.25, toTargetH));
+  } else {
+    phase = 'week';
+    const h = Math.min(RECOVER_H, toTargetH);
+    need = Math.max(0, (evenLine(start, targetEnd, now + h * HOUR_MS, emptyPct) - used) / h);
+  }
   const ratio = need > 0 ? rate / need : Infinity;
+  const cutoff = end - cutoffMin * 60_000;
   let mode: Mode;
-  if (a.used >= STOP_AT_PCT || need === 0) mode = 'stop';
+  if (used >= HARD_STOP_PCT || now >= cutoff) mode = 'stop';
+  else if (phase === 'final-hour') mode = 'finish';
+  // The reserve reached early: keep it for the lead and the final hour.
+  else if (used >= emptyPct) mode = 'stop';
+  else if (phase === 'week' && used > evenNow + AHEAD_BAND) mode = 'conserve';
   else if (ratio > CONSERVE_ABOVE) mode = 'conserve';
   else if (ratio < BURN_BELOW) mode = 'burn';
   else mode = 'steady';
-  const forecast = a.used + rate * a.left_h;
+  const forecast = used + rate * a.left_h;
   return {
     projected: Math.min(100, forecast),
-    hit: rate > 0 && forecast >= 100 ? now + (Math.max(0, 100 - a.used) / rate) * HOUR_MS : null,
+    hit: rate > 0 && forecast >= 100 ? now + (Math.max(0, 100 - used) / rate) * HOUR_MS : null,
     mode,
-    used_pct: a.used,
+    phase,
+    used_pct: used,
+    even_pace: evenNow,
+    off_pace: used - evenNow,
+    empty_target_pct: emptyPct,
+    launch_cutoff_at: cutoff,
     rate,
     rate_basis_h: basis,
     need,
     ratio: Number.isFinite(ratio) ? ratio : null,
     target_empty_at: targetEnd,
-    reset_at: a.end,
+    reset_at: end,
     last_reading: a.last_t,
     reading_age_h: a.stale_h,
   };
@@ -297,12 +382,13 @@ export function shortProjection(a: Analysis, now: number, hours: ShortWindowH): 
 
 /**
  * The model rung a mode suggests from a plan's ladder (cheapest first): burn = top rung,
- * conserve = bottom, steady = the middle (lower middle for an even count), stop = none.
+ * conserve and finish (short jobs only) = bottom, steady = the middle (lower middle for an even
+ * count), stop = none.
  */
 export function suggestedModel(mode: Mode, ladder: string[]): string | null {
   if (!ladder.length || mode === 'stop') return null;
   if (mode === 'burn') return ladder[ladder.length - 1] ?? null;
-  if (mode === 'conserve') return ladder[0] ?? null;
+  if (mode === 'conserve' || mode === 'finish') return ladder[0] ?? null;
   return ladder[Math.floor((ladder.length - 1) / 2)] ?? null;
 }
 
@@ -402,13 +488,25 @@ function median(xs: number[]): number {
   return s[Math.floor((s.length - 1) / 2)] as number;
 }
 
+/** A weekly window's readings, grouped and summarized (no "now" involved, so cacheable). */
+export interface WindowGroup {
+  end: number;
+  start: number;
+  /** The latest reported reset in the group. */
+  last_reset: number;
+  points: Point[];
+  final: number;
+  peak: number;
+  ran_out_at: number | null;
+}
+
 /**
- * Every weekly window in the readings, newest first. `windowMs` is the plan's window length.
+ * Groups readings into weekly windows, oldest first. `windowMs` is the plan's window length.
  * A window starts `windowMs` before its reset, or at the previous window's reset when that came
  * more than SAME_RESET_MS later and this window has no readings from before it (a shorter
- * window). Only the newest window can be current.
+ * window).
  */
-export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS): PlanWindow[] {
+export function groupWindows(readings: Reading[], windowMs = WEEK_MS): WindowGroup[] {
   const sorted = readings
     .filter((r) => r.resets_at && Number.isFinite(r.used_pct))
     .map((r) => ({ r, reset: ms(r.resets_at as string) }))
@@ -422,7 +520,7 @@ export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS
       g.last = x.reset;
     } else groups.push({ last: x.reset, items: [x] });
   }
-  const out: PlanWindow[] = [];
+  const out: WindowGroup[] = [];
   let prevEnd: number | null = null;
   for (const g of groups) {
     const end = median(g.items.map((x) => x.reset));
@@ -431,8 +529,12 @@ export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS
     // readings begin after the previous reset) or the previous window was reset early and this
     // one already has readings from before that reset, so it keeps its full length.
     if (prevEnd !== null && prevEnd > start + SAME_RESET_MS) {
-      const reads = g.items.map((x) => ms(x.r.read_at)).filter((t) => Number.isFinite(t));
-      if (!reads.length || Math.min(...reads) >= prevEnd - SAME_RESET_MS) start = prevEnd;
+      let first = Infinity;
+      for (const x of g.items) {
+        const t = ms(x.r.read_at);
+        if (t < first) first = t;
+      }
+      if (!Number.isFinite(first) || first >= prevEnd - SAME_RESET_MS) start = prevEnd;
     }
     prevEnd = end;
     const seen = new Set<string>();
@@ -444,35 +546,61 @@ export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS
         machine: r.machine_id ?? '',
         how: r.how ?? '',
       };
-      const key = JSON.stringify([p.t, p.used, p.machine, p.how]);
+      // machine and how never hold a NUL (store.ts allows [\w.:@-] only).
+      const key = `${p.t}\0${p.used}\0${p.machine}\0${p.how}`;
       if (seen.has(key) || !Number.isFinite(p.t)) continue;
       seen.add(key);
       points.push(p);
     }
     points.sort(cmpPoint);
     if (!points.length) continue;
-    // The newest reading wins; at the same instant the higher one (as pastWeeks does).
-    const final = (points[points.length - 1] as Point).used;
-    const hit = points.find((p) => p.used >= 100);
-    // Only the newest window can be current (an early reset leaves the one before it with a
-    // reset time still ahead).
-    const current = g === groups[groups.length - 1] && g.last > now;
-    const first = (points[0] as Point).t;
-    const last = (points[points.length - 1] as Point).t;
+    let peak = -Infinity;
+    for (const p of points) if (p.used > peak) peak = p.used;
     out.push({
-      id: new Date(end).toISOString(),
-      start,
       end,
-      length_h: (end - start) / HOUR_MS,
-      current,
+      start,
+      last_reset: g.last,
       points,
-      final,
-      peak: Math.max(...points.map((p) => p.used)),
-      ran_out_at: hit ? hit.t : null,
-      partial: first - start > PARTIAL_GAP_MS || (!current && !hit && end - last > PARTIAL_GAP_MS),
+      // The newest reading wins; at the same instant the higher one (as pastWeeks does).
+      final: (points[points.length - 1] as Point).used,
+      peak,
+      ran_out_at: points.find((p) => p.used >= 100)?.t ?? null,
     });
   }
-  return out.reverse();
+  return out;
+}
+
+/**
+ * The windows of groupWindows() as of `now`, newest first. Only the newest window can be
+ * current (an early reset leaves the one before it with a reset time still ahead).
+ */
+export function windowsAt(groups: WindowGroup[], now: number): PlanWindow[] {
+  return groups
+    .map((g, i): PlanWindow => {
+      const current = i === groups.length - 1 && g.last_reset > now;
+      const first = (g.points[0] as Point).t;
+      const last = (g.points[g.points.length - 1] as Point).t;
+      return {
+        id: new Date(g.end).toISOString(),
+        start: g.start,
+        end: g.end,
+        length_h: (g.end - g.start) / HOUR_MS,
+        current,
+        points: g.points,
+        final: g.final,
+        peak: g.peak,
+        ran_out_at: g.ran_out_at,
+        partial:
+          first - g.start > PARTIAL_GAP_MS ||
+          (!current && g.ran_out_at === null && g.end - last > PARTIAL_GAP_MS),
+      };
+    })
+    .reverse();
+}
+
+/** Every weekly window in the readings, newest first (groupWindows + windowsAt). */
+export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS): PlanWindow[] {
+  return windowsAt(groupWindows(readings, windowMs), now);
 }
 
 /** The window a time names: the one whose reset is within SAME_RESET_MS of it. */
@@ -497,7 +625,10 @@ export interface WindowStats {
   target_gap_pct: number;
   /** Hours it ran out before the target-empty time (negative = after), or null. */
   ran_out_early_h: number | null;
-  /** Time-weighted mean of (used - even pace) over the readings, % points (+ = ahead). */
+  /**
+   * Time-weighted mean of (used - even pace) over the readings, % points (+ = ahead). Even pace
+   * runs from 0% at the start to empty_target_pct at target empty.
+   */
   mean_vs_even_pct: number | null;
   /** Time-weighted mean of |used - even pace|, % points: lower = steadier pacing. */
   mean_abs_vs_even_pct: number | null;
@@ -507,12 +638,16 @@ export interface WindowStats {
  * Summary numbers for one window. Between readings the used % is taken as linear; the window
  * start counts as 0% only when the readings begin near it (not for a partial week).
  */
-export function windowStats(w: PlanWindow, emptyBufferHours = 1): WindowStats {
+export function windowStats(
+  w: PlanWindow,
+  emptyBufferHours = 1,
+  emptyTargetPct = EMPTY_TARGET_PCT,
+): WindowStats {
   const ranOut = w.ran_out_at !== null;
   const unused = ranOut ? 0 : Math.max(0, 100 - w.final);
   const target = w.end - emptyBufferHours * HOUR_MS;
-  const len = w.end - w.start;
-  const even = (t: number) => Math.min(100, Math.max(0, ((t - w.start) / len) * 100));
+  // The same even-pace line as pace(): 0% at the start to the target % at target empty.
+  const even = (t: number) => evenLine(w.start, target, t, emptyTargetPct);
   const pts: { t: number; used: number }[] = w.points
     .filter((p) => p.t >= w.start && p.t <= w.end)
     .map((p) => ({ t: p.t, used: p.used }));

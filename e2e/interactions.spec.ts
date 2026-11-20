@@ -172,6 +172,7 @@ test('Burndown shows the same recent rate in its summary and table', async ({ pa
     Object.assign(pace.plans[0].weekly, {
       used_pct: 61,
       even_pace_pct: 91.4,
+      off_pace_pts: -30.4,
       rate_basis_h: 3,
       rate_pct_per_h: 2.286,
       rate_24h: 0.466,
@@ -189,7 +190,7 @@ test('Burndown shows the same recent rate in its summary and table', async ({ pa
   const summary = page.locator('.weekly .summary');
   await expect(summary).toContainText(await recent.innerText());
   await expect(summary).toContainText('Last 24 h: 0.47%/h');
-  await expect(summary).toContainText('3 pts ahead of even pace');
+  await expect(summary).toContainText('Off pace: \u221230.4 pts');
 });
 
 test('Overview summarizes the previous visit once and can be dismissed', async ({ page }) => {

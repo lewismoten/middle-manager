@@ -958,12 +958,50 @@ paths:
                         window_hours:
                           { type: number, description: Length of the weekly window in hours. }
                         models: { type: array, items: { type: string } }
+                        empty_target_pct:
+                          type: number
+                          description: >-
+                            Used % to reach at target empty (default 97); the rest is a reserve
+                            for the lead and final-hour jobs.
+                        launch_cutoff_min:
+                          type: number
+                          description: No new launches this many minutes before the reset (default 30).
                         weekly:
                           type: [object, 'null']
                           properties:
-                            mode: { type: string }
+                            mode:
+                              type: string
+                              enum: [burn, steady, conserve, finish, stop]
+                              description: >-
+                                finish = final hour (target empty to reset), short jobs only;
+                                stop = no new workers (from the launch cutoff, at 99% used, or at
+                                empty_target_pct before target empty). The lead is never stopped.
+                            phase:
+                              type: string
+                              enum: [week, final, final-hour]
+                              description: >-
+                                week = follow the even-pace line, recovering onto it within 24 h;
+                                final = the last 24 h before target empty, aiming straight at
+                                empty_target_pct; final-hour = target empty to the reset.
                             used_pct: { type: number }
-                            even_pace_pct: { type: number }
+                            even_pace_pct:
+                              type: number
+                              description: >-
+                                Even pace now: 0% at the window start to empty_target_pct at
+                                target_empty_at, flat after.
+                            off_pace_pts:
+                              type: number
+                              description: used_pct - even_pace_pct (negative = behind).
+                            empty_target_pct: { type: number }
+                            target_empty_at: { type: string }
+                            launch_cutoff_at:
+                              type: string
+                              description: Reset minus launch_cutoff_min.
+                            need_pct_per_h:
+                              type: number
+                              description: >-
+                                Rate needed: back onto the even-pace line within 24 h (week), or
+                                to empty_target_pct by target empty (final); 0 in the final hour.
                             projected_pct: { type: number }
                             reset_at: { type: string }
                             suggested_model: { type: [string, 'null'] }
@@ -985,7 +1023,22 @@ paths:
         - in: query
           name: limit
           schema: { type: integer, minimum: 1, maximum: 10000, default: 5000 }
+          description: The newest this many readings (applied before max_points).
+        - in: query
+          name: reset
+          schema: { type: string }
+          description: >-
+            Only readings of the window resetting at this time (resets_at within 3 hours of it),
+            ISO 8601 with a zone.
+        - in: query
+          name: max_points
+          schema: { type: integer, minimum: 10, maximum: 5000 }
+          description: >-
+            Thin the readings to at most this many for a long chart: the span is cut into equal
+            time buckets, each keeping its highest and its newest reading; the first and last
+            readings are always kept. Leave it out to get every reading.
       responses:
+        '400': { description: Invalid since, reset or max_points }
         '200':
           description: Read plan readings
           content:

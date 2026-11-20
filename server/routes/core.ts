@@ -18,6 +18,8 @@ export function publicConfig(config: Config, version: string) {
       windows: p.windows,
       empty_buffer_hours: p.empty_buffer_hours,
       window_hours: p.window_hours,
+      empty_target_pct: p.empty_target_pct,
+      launch_cutoff_min: p.launch_cutoff_min,
       models: config.models[p.id] ?? [],
     })),
     local_models: config.local_models.map(({ id, name, kind }) => ({ id, name, kind })),

@@ -9,7 +9,9 @@ import {
   analyse,
   currentWindow,
   findWindow,
-  planWindows,
+  groupWindows,
+  windowsAt,
+  type WindowGroup,
   windowStats,
   type PlanWindow,
   HOUR_MS,
@@ -20,7 +22,9 @@ import {
   STALE_AFTER_H,
   suggestedModel,
   type Mode,
+  type PacePolicy,
   type PastWeek,
+  type Phase,
   type Reading,
   type ShortProjection,
   type ShortReason,
@@ -73,8 +77,17 @@ export interface WeeklyPace {
   start: string;
   reset_at: string;
   target_empty_at: string;
+  /** No new worker launches from this time (reset minus launch_cutoff_min). */
+  launch_cutoff_at: string;
+  /** Used % to reach at target empty; above it is the reserve. */
+  empty_target_pct: number;
   used_pct: number;
+  /** Even pace now: 0% at the window start to empty_target_pct at target empty. */
   even_pace_pct: number;
+  /** Used minus even pace, % points (+ = ahead of the line). */
+  off_pace_pts: number;
+  /** week (follow the even line), final (last 24 h before target empty) or final-hour. */
+  phase: Phase;
   hours_left: number;
   /** % per hour over the last 24 h of readings, and where that span starts. */
   rate_24h: number;
@@ -107,6 +120,8 @@ export interface PlanPace {
   empty_buffer_hours: number;
   /** Length of the weekly window in hours. */
   window_hours: number;
+  empty_target_pct: number;
+  launch_cutoff_min: number;
   models: string[];
   weekly: WeeklyPace | null;
   five_hour: StoredReading | null;
@@ -131,6 +146,13 @@ function windowReadings(db: Db, planId: string, now: number): Reading[] {
     .all(planId, isoOf(t - 3 * HOUR_MS), isoOf(t + 3 * HOUR_MS)) as unknown as Reading[];
 }
 
+/** A plan's pacing settings from its config. */
+export const pacePolicy = (plan: PlanConfig): PacePolicy => ({
+  emptyBufferHours: plan.empty_buffer_hours,
+  emptyTargetPct: plan.empty_target_pct,
+  launchCutoffMin: plan.launch_cutoff_min,
+});
+
 export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.now()): PlanPace {
   const out: PlanPace = {
     plan: plan.id,
@@ -138,6 +160,8 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
     provider: plan.provider,
     empty_buffer_hours: plan.empty_buffer_hours,
     window_hours: plan.window_hours,
+    empty_target_pct: plan.empty_target_pct,
+    launch_cutoff_min: plan.launch_cutoff_min,
     models: config.models[plan.id] ?? [],
     weekly: null,
     five_hour: plan.windows.includes('five_hour') ? latestReading(db, plan.id, 'five_hour') : null,
@@ -145,15 +169,19 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
   const w = currentWindow(windowReadings(db, plan.id, now), now, plan.window_hours * HOUR_MS);
   if (!w || !w.points.length) return out;
   const a = analyse(w, now);
-  const p = pace(a, now, plan.empty_buffer_hours);
+  const p = pace(a, now, pacePolicy(plan));
   const projected = roundTo(p.projected, 1);
   out.weekly = {
     current: a.end > now,
     start: isoOf(a.start),
     reset_at: isoOf(a.end),
     target_empty_at: isoOf(p.target_empty_at),
+    launch_cutoff_at: isoOf(p.launch_cutoff_at),
+    empty_target_pct: p.empty_target_pct,
     used_pct: a.used,
-    even_pace_pct: roundTo(a.pace, 1),
+    even_pace_pct: roundTo(p.even_pace, 1),
+    off_pace_pts: roundTo(p.off_pace, 1),
+    phase: p.phase,
     hours_left: roundTo(a.left_h, 2),
     rate_24h: roundTo(a.rate, 3),
     rate_24h_since: isoOf(a.since),
@@ -242,8 +270,8 @@ export interface WindowView {
 
 const round = (v: number | null, d: number) => (v === null ? null : roundTo(v, d));
 
-export function windowView(w: PlanWindow, emptyBufferHours: number): WindowView {
-  const s = windowStats(w, emptyBufferHours);
+export function windowView(w: PlanWindow, plan: PacePolicy): WindowView {
+  const s = windowStats(w, plan.emptyBufferHours, plan.emptyTargetPct);
   return {
     id: w.id,
     current: w.current,
@@ -269,15 +297,40 @@ export function windowView(w: PlanWindow, emptyBufferHours: number): WindowView 
   };
 }
 
+/**
+ * Grouped windows per database and plan, reused while the plan's weekly readings are unchanged
+ * (same count, oldest and newest id). With 5-minute readings over 120 days this is ~70k rows a plan,
+ * which takes a few hundred ms to read and group; the page asks for it every minute.
+ */
+const windowCache = new WeakMap<
+  Db,
+  Map<string, { version: string; windowMs: number; groups: WindowGroup[] }>
+>();
+
 /** All weekly windows of a plan from its stored readings, newest first. */
 export function windowsOf(db: Db, plan: PlanConfig, now = Date.now()): PlanWindow[] {
-  const rows = db
+  const windowMs = plan.window_hours * HOUR_MS;
+  const v = db
     .prepare(
-      `SELECT read_at, used_pct, resets_at, machine_id, how FROM plan_readings
+      `SELECT COUNT(*) AS n, MIN(id) AS lo, MAX(id) AS m FROM plan_readings
         WHERE plan_id = ? AND "window" = 'weekly' AND resets_at IS NOT NULL`,
     )
-    .all(plan.id) as unknown as Reading[];
-  return planWindows(rows, now, plan.window_hours * HOUR_MS);
+    .get(plan.id) as { n: number; lo: number | null; m: number | null };
+  const version = `${v.n}:${v.lo}:${v.m}`;
+  let perDb = windowCache.get(db);
+  if (!perDb) windowCache.set(db, (perDb = new Map()));
+  let hit = perDb.get(plan.id);
+  if (!hit || hit.version !== version || hit.windowMs !== windowMs) {
+    const rows = db
+      .prepare(
+        `SELECT read_at, used_pct, resets_at, machine_id, how FROM plan_readings
+          WHERE plan_id = ? AND "window" = 'weekly' AND resets_at IS NOT NULL`,
+      )
+      .all(plan.id) as unknown as Reading[];
+    hit = { version, windowMs, groups: groupWindows(rows, windowMs) };
+    perDb.set(plan.id, hit);
+  }
+  return windowsAt(hit.groups, now);
 }
 
 export function planWindowList(
@@ -291,7 +344,7 @@ export function planWindowList(
     plan: plan.id,
     window_hours: plan.window_hours,
     empty_buffer_hours: plan.empty_buffer_hours,
-    windows: list.slice(0, opts.limit ?? 52).map((w) => windowView(w, plan.empty_buffer_hours)),
+    windows: list.slice(0, opts.limit ?? 52).map((w) => windowView(w, pacePolicy(plan))),
   };
 }
 
@@ -306,7 +359,7 @@ export function planWindowDetail(db: Db, plan: PlanConfig, which: string, now = 
   return {
     plan: plan.id,
     window_hours: plan.window_hours,
-    window: windowView(w, plan.empty_buffer_hours),
+    window: windowView(w, pacePolicy(plan)),
     readings: w.points.map((p) => ({
       read_at: isoOf(p.t),
       used_pct: p.used,

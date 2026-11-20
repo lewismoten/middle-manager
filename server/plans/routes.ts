@@ -68,9 +68,27 @@ export const planRoutes: Route[] = [
       }
       const window = q.get('window') ?? undefined;
       const limit = Math.min(10_000, Math.max(1, Number(q.get('limit')) || 5000));
+      let reset: number | undefined;
+      try {
+        reset = q.get('reset') ? Date.parse(isoTime(q.get('reset'), 'reset')) : undefined;
+      } catch (err) {
+        badRequest(err);
+      }
+      const rawMax = q.get('max_points');
+      const maxPoints = rawMax === null ? undefined : Number(rawMax);
+      if (
+        maxPoints !== undefined &&
+        (!Number.isInteger(maxPoints) || maxPoints < 10 || maxPoints > 5000)
+      ) {
+        throw new HttpError(
+          400,
+          'invalid_input',
+          'max_points must be a whole number from 10 to 5000',
+        );
+      }
       return {
         plan: plan.id,
-        readings: listReadings(ctx.state.db, plan.id, { since, window, limit }),
+        readings: listReadings(ctx.state.db, plan.id, { since, window, limit, reset, maxPoints }),
       };
     },
   },

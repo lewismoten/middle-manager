@@ -246,9 +246,11 @@ export function spreadLabels(ys: number[], gap: number, top: number, bottom: num
   return out;
 }
 
-// ---- Page state: URL (#/burndown?plan=&week=&compare=&avg=) and localStorage ----
+// ---- Page state: URL (#/burndown?plan=&week=&compare=&avg=&view=) and localStorage ----
 
 export interface BurndownState {
+  /** "stretch" (last 2 h + next 2 h) or "week" when chosen; null = not chosen (automatic). */
+  view?: 'week' | 'stretch' | null;
   plan: string | null;
   /** "current" or a window id (reset time ISO). */
   week: string;
@@ -266,6 +268,8 @@ export function parseState(hash: string): Partial<BurndownState> {
   if (week === 'current' || (week && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(week))) out.week = week;
   if (q.has('compare')) out.compare = parseCompare(q.get('compare'));
   if (q.has('avg')) out.avg = q.get('avg') === '1';
+  const view = q.get('view');
+  if (view === 'week' || view === 'stretch') out.view = view;
   return out;
 }
 
@@ -276,6 +280,7 @@ export function stateHash(s: BurndownState): string {
   if (s.week !== 'current') q.set('week', s.week);
   if (s.compare !== 'none') q.set('compare', s.compare);
   if (s.avg) q.set('avg', '1');
+  if (s.view) q.set('view', s.view);
   const text = q.toString();
   return text ? `#/burndown?${text}` : '#/burndown';
 }

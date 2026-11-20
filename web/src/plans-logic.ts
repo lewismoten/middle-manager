@@ -1,4 +1,6 @@
-export type Mode = 'burn' | 'steady' | 'conserve' | 'stop';
+export type Mode = 'burn' | 'steady' | 'conserve' | 'finish' | 'stop';
+/** week = follow the even-pace line; final = last 24 h before target empty; then final-hour. */
+export type Phase = 'week' | 'final' | 'final-hour';
 
 /** Projection at the rate over the last 1 or 2 hours (server/plans/service.ts). */
 export interface ShortProjection {
@@ -18,8 +20,16 @@ export interface WeeklyPace {
   start: string;
   reset_at: string;
   target_empty_at: string;
+  /** No new launches from this time (older servers leave it out). */
+  launch_cutoff_at?: string;
+  /** Used % to reach at target empty; above it is the reserve. */
+  empty_target_pct?: number;
   used_pct: number;
+  /** Even pace now: 0% at the window start to empty_target_pct at target empty. */
   even_pace_pct: number;
+  /** Used minus even pace, % points (+ = ahead). */
+  off_pace_pts?: number;
+  phase?: Phase;
   hours_left: number;
   rate_24h: number;
   rate_24h_since: string;
@@ -42,13 +52,20 @@ export interface WeeklyPace {
 
 export const pct = (v: number, digits = 0) => `${v.toFixed(digits)}%`;
 
-export function paceDifference(
-  w: Pick<WeeklyPace, 'even_pace_pct' | 'projected_pct'>,
-): string | null {
-  const gap = w.even_pace_pct - w.projected_pct;
-  if (Math.abs(gap) < 1) return null;
-  const points = Math.round(Math.abs(gap));
-  return `${points} ${points === 1 ? 'pt' : 'pts'} ${gap > 0 ? 'behind' : 'ahead of'} even pace`;
+/** The minus sign for signed numbers on screen (U+2212, not a hyphen). */
+const MINUS = '\u2212';
+
+/** "+3.2", "−10.8", "0.0": a signed number with one decimal. */
+export function signed(v: number, digits = 1): string {
+  const r = Number(v.toFixed(digits));
+  if (r === 0) return (0).toFixed(digits);
+  return `${r > 0 ? '+' : MINUS}${Math.abs(r).toFixed(digits)}`;
+}
+
+/** "Off pace: −10.8 pts" (behind the even-pace line) or "+3.2 pts" (ahead); null if unknown. */
+export function offPace(w: Pick<WeeklyPace, 'off_pace_pts'>): string | null {
+  if (w.off_pace_pts === undefined || !Number.isFinite(w.off_pace_pts)) return null;
+  return `Off pace: ${signed(w.off_pace_pts)} pts`;
 }
 
 export function burnForecast(

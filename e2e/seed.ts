@@ -2,7 +2,8 @@
 // readings every 2 h, then every 20 min for the last couple of hours as the burn picks up (so the
 // 1 h and 2 h projections differ from the longer one), two finished weeks (the older one runs out
 // before its reset) and a 5-hour window;
-// plan-b has a stale reading.
+// plan-b has a stale reading. nearReset() is plan-d (on the board server only): a reading every
+// 5 minutes all week, resetting about 1 h 40 min from now, the burn speeding up over the last 2 h.
 
 import type { Db } from '../server/db/index.ts';
 import { insertReadings, type NewReading } from '../server/plans/store.ts';
@@ -86,4 +87,30 @@ export function seedPlanReadings(db: Db, now = Date.now()): void {
     },
   );
   insertReadings(db, rows);
+}
+
+/** plan-d: every 5 minutes since its window start, resetting ~1 h 40 min from now. */
+export function nearReset(now: number): NewReading[] {
+  const FIVE = 5 * 60_000;
+  const reset = Math.ceil((now + 100 * 60_000) / FIVE) * FIVE;
+  const start = reset - 7 * 24 * HOUR;
+  const last = now - 3 * 60_000;
+  const slowUntil = now - 2 * HOUR;
+  const rows: NewReading[] = [];
+  for (let t = start + FIVE, i = 0; t <= last; t += FIVE, i++) {
+    // 88% by two hours ago, then 1.8%/h, then 2.6%/h over the last hour.
+    let used = (88 * (Math.min(t, slowUntil) - start)) / (slowUntil - start);
+    if (t > slowUntil) used += (1.8 * (Math.min(t, now - HOUR) - slowUntil)) / HOUR;
+    if (t > now - HOUR) used += (2.6 * (t - (now - HOUR))) / HOUR;
+    rows.push({
+      plan_id: 'plan-d',
+      window: 'weekly',
+      used_pct: Math.round((used + ((i * 7) % 3) * 0.01) * 100) / 100,
+      resets_at: new Date(reset + (i % 2 ? 60_000 : 0)).toISOString(),
+      read_at: new Date(t).toISOString(),
+      machine_id: i % 2 ? 'laptop-1' : 'server-1',
+      how: 'seed',
+    });
+  }
+  return rows;
 }

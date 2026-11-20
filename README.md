@@ -29,8 +29,8 @@ Screenshots use the synthetic data from the end-to-end tests (`npm run screensho
 ### Overview
 
 One screen for "is anything wrong?": a gauge per plan with how much of the week is used, where an
-even pace would be, the projection at the reset, the pacing mode and the reset countdown, plus
-where the last 1 h and 2 h burn rates lead. Stale
+even pace would be and how far off it the plan is ("Off pace: −10.8 pts"), the projection at the
+reset, the pacing mode and the reset countdown, plus where the last 1 h and 2 h burn rates lead. Stale
 readings are marked as stale. The other Overview items (board counts, agents now, failed jobs) are
 still planned.
 
@@ -38,10 +38,28 @@ still planned.
 
 ### Burndown
 
-Per plan: the weekly window chart (readings, even-pace line, projection, target-empty marker and
-"now", plus projections at the last 1 h and 2 h burn rate that you can toggle from the legend), the 5-hour window when the plan reports one, a past-weeks table (final %, whether and when it ran
-out, hours left unused at the reset, distance from the target and from even pace), and a pacing
-table with the mode (burn, steady, conserve, stop) and the suggested model rung. Pick any past week to see its chart (Prev / Next, or the `[` and
+Per plan: the weekly window chart (readings, even-pace line, projection, target-empty marker, the
+reserve band and "now", plus projections at the last 1 h and 2 h burn rate that you can toggle
+from the legend), the 5-hour window when the plan reports one, a past-weeks table (final %,
+whether and when it ran out, hours left unused at the reset, distance from the target and from
+even pace), and a pacing table with the mode (burn, steady, conserve, finish, stop), how far off
+even pace each plan is and the suggested model rung.
+
+The pacing target is near empty, not 100%: 97% (`empty_target_pct`) at target empty, an hour
+before the reset (`empty_buffer_hours`). The last 3% is a reserve for the lead agent and the final
+hour. Even pace runs from 0% at the window start to that target. During the week the mode steers
+back onto the even-pace line within 24 h (and says conserve when 5+ points ahead); in the last
+24 h it aims straight at the target; the final hour is "finish" (short jobs only); "stop" means no
+new workers from 30 minutes before the reset (`launch_cutoff_min`), at 99% used, or at the target
+before target empty. The lead is never told to stop.
+
+**Last 2 h + next 2 h.** For the current week, a switch zooms the chart into the final stretch:
+the last 2 hours of readings (every one, with a dot) and 2 hours of projections at the mode, 2 h
+and 1 h rates, on 15-minute ticks with a y axis fitted to what is shown (and labeled as zoomed),
+with the target-empty marker, launch cutoff, reset and reserve band. A readout above it gives the
+newest reading and its age (with a warning past 15 minutes), the rates, and where each projection
+lands at target empty and at the reset. It opens by itself when the reset is under 3 hours away;
+once you pick a view, your choice wins (kept in the URL as `view=` and in localStorage). Pick any past week to see its chart (Prev / Next, or the `[` and
 `]` keys), and compare with the last 1-4 weeks, a chosen week or their average: other weeks are
 drawn as thinner dashed lines, aligned by time since the window started, labeled at the end and
 read out on hover. A plan whose window is not 7 days sets `window_hours`.

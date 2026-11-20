@@ -112,6 +112,20 @@ Unknown query keys and invalid filter values return 400. Task listings accept bo
 (backlog, todo, doing, review, blocked, done). Role and kind belong to agent runs.
 Use `/plans/pace?plan=ID&model=MODEL` to select plans by configured ID and model.
 
+The pacing fields in each plan's `weekly` object: `mode` is `burn`, `steady`, `conserve`,
+`finish` (the final hour before the reset: short jobs that end before it only) or `stop` (no new
+workers; it never applies to the lead agent). `phase` is `week` (follow the even-pace line,
+recovering onto it within 24 h), `final` (the last 24 h before `target_empty_at`, aiming straight
+at `empty_target_pct`) or `final-hour`. `even_pace_pct` runs from 0% at the window start to
+`empty_target_pct` (97 by default) at `target_empty_at`; `off_pace_pts` is used minus that.
+Launch nothing new after `launch_cutoff_at`:
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/pace?plan=claude" \
+  | jq '.plans[0].weekly | {mode, phase, off_pace_pts, launch_cutoff_at}'
+# { "mode": "burn", "phase": "week", "off_pace_pts": -10.8, "launch_cutoff_at": "2026-11-20T22:30:00.000Z" }
+```
+
 Each plan's `weekly` object also has `projection_1h` and `projection_2h`: the burn rate over the
 last 1 or 2 hours and where it leads (`projected_pct` at the reset, or `runs_out_at` if sooner).
 They react faster than `rate_pct_per_h` when the burn changes, but the pacing mode and the

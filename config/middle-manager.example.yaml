@@ -24,7 +24,9 @@ plans: # subscriptions to pace
     provider: anthropic-oauth # reads usage with the login already on this host
     credentials: ~/.claude/.credentials.json
     windows: [weekly, five_hour]
-    empty_buffer_hours: 1 # aim to run out this long before the reset
+    empty_buffer_hours: 1 # target empty: this long before the reset
+    empty_target_pct: 97 # used % to reach at target empty; the rest is the lead's reserve (50-100)
+    launch_cutoff_min: 30 # no new workers this many minutes before the reset
     window_hours: 168 # weekly window length, 24 to 744 (default 7 days); past weeks align on it
   - id: codex
     name: 'Codex plan'

@@ -294,13 +294,20 @@ describe('plan API', () => {
     };
     const a = pace.plans.find((p) => p.plan === 'plan-a')!;
     expect(a.five_hour?.used_pct).toBe(33);
+    // 29 points behind the even-pace line (0% at the start to 97% an hour before the reset):
+    // recovering within 24 h needs about 1.8%/h, so 1%/h is a burn.
     expect(a.weekly).toMatchObject({
       current: true,
       used_pct: 22,
-      mode: 'steady',
+      phase: 'week',
+      even_pace_pct: 51.1,
+      off_pace_pts: -29.1,
+      empty_target_pct: 97,
+      launch_cutoff_at: iso(80 - 0.5),
+      mode: 'burn',
       rate_basis_h: 3,
       rate_pct_per_h: 1,
-      suggested_model: 'small',
+      suggested_model: 'large',
       stale: false,
       readings: 7,
     });

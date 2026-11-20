@@ -10,7 +10,7 @@ import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
 import {
   burnForecastLine,
-  paceDifferenceLine,
+  offPaceLine,
   recentRateLabel,
   getPace,
   modeBadge,
@@ -62,7 +62,7 @@ function card(p: PlanPace, now: number, tz?: string): HTMLElement {
       projected: w.projected_pct,
       label,
     }),
-    paceDifferenceLine(w),
+    offPaceLine(w),
     burnForecastLine(w),
     shortProjectionsLine(w, tz),
     h(

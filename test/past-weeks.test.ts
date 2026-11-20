@@ -181,11 +181,12 @@ describe('windowStats', () => {
     expect(s.unused_h).toBeCloseTo(((100 - w!.final) / 100) * 168, 5);
     expect(s.locked_out_h).toBeNull();
     expect(s.target_gap_pct).toBeCloseTo(w!.final - 100, 5);
-    // 84% of even pace: the gap grows linearly, so the mean is about half the end gap.
+    // Even pace runs to 97% an hour before the reset; the gap to a straight 0-84% line grows
+    // almost linearly, so the mean is about half the end gap (13 pts).
     expect(s.mean_vs_even_pct!).toBeLessThan(0);
     expect(s.mean_abs_vs_even_pct!).toBeCloseTo(-s.mean_vs_even_pct!, 5);
-    expect(s.mean_abs_vs_even_pct!).toBeGreaterThan(7);
-    expect(s.mean_abs_vs_even_pct!).toBeLessThan(9);
+    expect(s.mean_abs_vs_even_pct!).toBeGreaterThan(6);
+    expect(s.mean_abs_vs_even_pct!).toBeLessThan(7.5);
   });
 
   it('reports how early a week ran out against the target and the hours locked out', () => {
