@@ -609,6 +609,14 @@ describe('schedules API', () => {
     return { status: res.status, body: (await res.json()) as Record<string, any> };
   }
 
+  it('validates external job filters', async () => {
+    for (const query of ['status=bogus', 'kind=bogus', 'bogus=1']) {
+      expect((await call('GET', '/external-jobs?' + query)).status).toBe(400);
+    }
+    expect((await call('GET', '/external-jobs?status=running&kind=systemd-timers')).status).toBe(
+      200,
+    );
+  });
   it('creates, lists, edits, runs and deletes jobs with the right scopes', async () => {
     let res = await call('GET', '/jobs', undefined, null);
     expect(res.status).toBe(200);
@@ -711,6 +719,10 @@ describe('schedules API', () => {
     await call('POST', '/external-jobs/refresh', {});
     res = await call('GET', '/external-jobs', undefined, null);
     expect(res.body.jobs).toHaveLength(3);
+    const filtered = await call('GET', '/external-jobs?kind=hermes-cron&status=error');
+    expect(filtered.body.jobs).toMatchObject([{ name: 'Sync sample site' }]);
+    const otherKind = await call('GET', '/external-jobs?kind=systemd-timers&status=error');
+    expect(otherKind.body.jobs).toEqual([]);
     expect(res.body.jobs[0]).toMatchObject({ source: 'hermes-cron', stale: false });
     expect(JSON.stringify(res.body)).not.toContain('SECRET PROMPT');
     expect((await call('POST', '/external-jobs', {})).status).toBe(405);

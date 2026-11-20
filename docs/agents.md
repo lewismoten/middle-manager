@@ -41,7 +41,7 @@ installed, `| jq -r .id` does the same.
 ```sh
 curl -fsS -X PATCH "$MM_URL/api/v1/runs/$RUN_ID" \
   -H "Authorization: Bearer $MM_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"status":"done","summary":"Fixed; PR opened","tokens":{"in":1200,"out":5400,"cache_read":250000}}'
+  -d '{"status":"done","summary":"Fixed; PR opened"}'
 ```
 
 `status` is one of `done`, `failed` or `cancelled`. `ended_at` is set to now unless you send it.
@@ -49,13 +49,13 @@ Sending `{"end": true}` alone is the same as `{"status": "done"}`.
 
 ## Progress (optional)
 
-The same `PATCH` updates a running run: token totals, the model it switched to, a summary so far.
-Token fields are **totals so far**, not increments.
+Use the same `PATCH` to update the model or summary. Omit token counts from agent reports.
+The `session-tokens` collector reads totals from the harness session log.
 
 ```sh
 curl -fsS -X PATCH "$MM_URL/api/v1/runs/$RUN_ID" \
   -H "Authorization: Bearer $MM_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"tokens":{"in":800,"out":2100},"summary":"Tests written, fixing now"}'
+  -d '{"summary":"Tests written, fixing now"}'
 ```
 
 ## Sub-agents
@@ -101,9 +101,17 @@ curl -fsS "$MM_URL/api/v1/runs?task=login-fix&role=review"
 curl -fsS "$MM_URL/api/v1/runs/$RUN_ID"                        # full prompt, parent, sub-agents
 ```
 
-Filters: `active`, `finished_within_h` (running plus finished in the last N hours), `machine`,
+Read `pid` and `machine_id` from a matching run in `GET /api/v1/runs?active=1` or from
+`GET /api/v1/runs/{id}`. A null pid means the process ID is unknown.
+
+Filters: `active`, `finished` (1 or true for closed runs, 0 or false for open runs), `finished_within_h` (running plus finished in the last N hours), `machine`,
 `task` (id or short name), `model`, `project`, `role`, `kind`, `status`, `parent`, `limit`
 (default 500, max 2000). The list returns `prompt_first_line` instead of the full prompt.
+
+Unknown query keys and invalid filter values return 400. Task listings accept board statuses
+(backlog, todo, doing, review, blocked, done). Role and kind belong to agent runs.
+Use `/plans/pace?plan=ID&model=MODEL` to select plans by configured ID and model.
+External jobs accept `kind` (hermes-cron or systemd-timers) and `status` (running, ok, failed, error).
 
 ## Collectors
 

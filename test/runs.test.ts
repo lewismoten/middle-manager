@@ -442,6 +442,14 @@ describe('runs API', () => {
     const list = await call('GET', '/runs?active=1', undefined, false);
     expect((list.body.runs as { id: number }[]).map((r) => r.id)).toEqual([child.body.id]);
 
+    const finished = await call('GET', '/runs?finished=1');
+    expect(finished.status).toBe(200);
+    expect(finished.body.runs).toEqual([expect.objectContaining({ id })]);
+    for (const query of ['status=bogus', 'finished=bogus', 'bogus=1']) {
+      const rejected = await call('GET', '/runs?' + query);
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error).toMatchObject({ message: expect.any(String) });
+    }
     const detail = await call('GET', `/runs/${id}`, undefined, false);
     expect(detail.body.prompt).toBe('Plan the sprint\nwith details');
     expect((detail.body.children as unknown[]).length).toBe(1);

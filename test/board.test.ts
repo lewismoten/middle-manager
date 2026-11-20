@@ -162,7 +162,8 @@ describe('agent task queue', () => {
     ]);
   });
   test('rejects unknown query parameters', async () => {
-    for (const path of ['?bogus=1', '/next?bogus=1'])
+    expect((await fetch(url + '?status=todo')).status).toBe(200);
+    for (const path of ['?role=bogus', '?kind=bogus', '?status=bogus', '?bogus=1', '/next?bogus=1'])
       expect((await fetch(url + path)).status).toBe(400);
     expect((await claim(2, 'unknown-query', undefined, '?bogus=1')).status).toBe(400);
   });

@@ -1,3 +1,4 @@
+import { checkQuery } from '../http/query.ts';
 // S2 routes: plans, readings, pacing and running plan collectors.
 
 import { HttpError, readJson, type Ctx, type Route } from '../http/app.ts';
@@ -36,7 +37,20 @@ export const planRoutes: Route[] = [
   {
     method: 'GET',
     path: '/plans/pace',
-    handler: ({ state }) => allPace(state.db, state.config),
+    handler: ({ state, url }) => {
+      const { config, db } = state;
+      const q = url.searchParams;
+      checkQuery(q, {
+        plan: config.plans.map((p) => p.id),
+        model: Object.values(config.models).flat(),
+      });
+      const plan = q.get('plan'),
+        model = q.get('model');
+      const plans = config.plans.filter(
+        (p) => (!plan || p.id === plan) && (!model || config.models[p.id]?.includes(model)),
+      );
+      return allPace(db, { ...config, plans });
+    },
   },
   {
     method: 'GET',

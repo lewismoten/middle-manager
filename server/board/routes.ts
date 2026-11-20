@@ -1,13 +1,10 @@
+import { checkQuery } from '../http/query.ts';
 import { readJson, sendJson, HttpError, type Route } from '../http/app.ts';
-import { object, validate, task, atomic, save, invalid } from './tasks.ts';
+import { object, validate, task, atomic, save, invalid, statuses } from './tasks.ts';
 const eligible = `tasks.status='todo' AND claimed_by IS NULL AND external_ref IS NULL
   AND NOT EXISTS (SELECT 1 FROM task_dependencies d JOIN tasks parent ON parent.id=d.depends_on
     WHERE d.task_id=tasks.id AND parent.status!='done')`;
 
-function checkQuery(url: URL, allowed: string[]) {
-  for (const key of url.searchParams.keys())
-    if (!allowed.includes(key)) invalid('Unknown query parameter: ' + key);
-}
 function pageNumber(url: URL, key: string, fallback: number) {
   const raw = url.searchParams.get(key);
   if (raw === null) return fallback;
@@ -19,18 +16,17 @@ export const boardRoutes: Route[] = [
     method: 'GET',
     path: '/tasks',
     handler: ({ state, url }) => {
-      checkQuery(url, [
-        'status',
-        'project',
-        'assignee',
-        'sprint',
-        'q',
-        'limit',
-        'offset',
-        'include_body',
-      ]);
+      checkQuery(url.searchParams, {
+        status: statuses,
+        project: null,
+        assignee: null,
+        sprint: null,
+        q: null,
+        limit: null,
+        offset: null,
+        include_body: ['1'],
+      });
       const includeBody = url.searchParams.get('include_body');
-      if (includeBody !== null && includeBody !== '1') invalid('Invalid include_body');
       const columns = `id,short_name,title,status,lane,project_id,assignee,priority,sprint,origin,
         external_ref,created_at,updated_at,source_created_at,status_since,claimed_by,
         rtrim(substr(substr(body,1,256),1,instr(substr(body,1,256)||char(10),char(10))-1),char(13)) AS body_first_line`;
@@ -75,7 +71,7 @@ export const boardRoutes: Route[] = [
     method: 'GET',
     path: '/tasks/next',
     handler: ({ state: { db }, url, res }) => {
-      checkQuery(url, ['project', 'assignee']);
+      checkQuery(url.searchParams, { project: null, assignee: null });
       const project = url.searchParams.get('project') || null,
         assignee = url.searchParams.get('assignee') || null;
       const row = db
@@ -94,7 +90,7 @@ export const boardRoutes: Route[] = [
     method: 'POST',
     path: '/tasks/:id/claim',
     handler: async ({ state: { db }, url, res, req, token, params }) => {
-      checkQuery(url, []);
+      checkQuery(url.searchParams, {});
       const raw = await readJson(req);
       const input = raw === undefined ? {} : object(raw);
       const actor = token!.name;

@@ -1,3 +1,4 @@
+import { checkQuery } from '../http/query.ts';
 // Schedules API (SPEC 6): GET/POST /jobs, GET/PATCH/DELETE /jobs/:id, POST /jobs/:id/run,
 // GET /jobs/:id/runs, GET /jobs/preview, GET /external-jobs, POST /external-jobs/refresh,
 // POST /collectors/:id/run (any runnable collector: plans, board, agents, mirrors).
@@ -23,7 +24,7 @@ import {
   viewJob,
   type JobRunRow,
 } from './jobs.ts';
-import { listExternal, runMirrors } from './mirror.ts';
+import { MIRROR_KINDS, listExternal, runMirrors } from './mirror.ts';
 import { schedulerFor } from './scheduler.ts';
 
 function jobId(raw: string | undefined): number {
@@ -161,9 +162,17 @@ export const scheduleRoutes: Route[] = [
   {
     method: 'GET',
     path: '/external-jobs',
-    handler: ({ state }) => {
+    handler: ({ state, url }) => {
       const now = new Date();
-      return { now: now.toISOString(), jobs: listExternal(state.db, state.config, now) };
+      const q = url.searchParams;
+      checkQuery(q, { kind: MIRROR_KINDS, status: ['running', 'ok', 'failed', 'error'] });
+      const status = q.get('status'),
+        kind = q.get('kind');
+      const jobs = listExternal(state.db, state.config, now).filter(
+        (job) =>
+          (!kind || job.kind === kind) && (!status || job.last_status?.split(' ')[0] === status),
+      );
+      return { now: now.toISOString(), jobs };
     },
   },
   {

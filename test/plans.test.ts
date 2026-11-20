@@ -248,6 +248,17 @@ describe('plan API', () => {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
 
+  it('filters pace by configured plan and model', async () => {
+    for (const query of ['plan=bogus', 'model=bogus', 'bogus=1']) {
+      expect((await call('GET', '/plans/pace?' + query)).status).toBe(400);
+    }
+    const res = await call('GET', '/plans/pace?plan=plan-a&model=small');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ plans: [{ plan: 'plan-a' }] });
+    expect(await (await call('GET', '/plans/pace?plan=plan-b&model=small')).json()).toMatchObject({
+      plans: [],
+    });
+  });
   it('needs a token to post readings', async () => {
     const res = await call('POST', '/plans/plan-a/readings', { used_pct: 1 }, false);
     expect(res.status).toBe(401);
