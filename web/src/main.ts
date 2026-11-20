@@ -19,7 +19,7 @@ import {
 import { byId, h } from './dom.ts';
 import { SHIPPED, SLICES, TABS, tabFromHash, type Skeleton, type Tab } from './tabs.ts';
 import { burndownPage } from './pages/burndown.ts';
-import { planGauges } from './pages/overview.ts';
+import { overviewPage } from './pages/overview.ts';
 import { mountAgents } from './pages/agents.ts';
 import { mountSchedules } from './pages/schedules.ts';
 import { mountNotes } from './pages/notes.ts';
@@ -250,7 +250,7 @@ function renderPage(tab: Tab, focus: boolean): void {
     h('div', { class: 'side' }, h('p', { class: 'lead' }, tab.lead), coming, fromConfig(tab)),
   );
   if (tab.id === 'burndown') main.replaceChildren(head, burndownPage(config?.site.timezone));
-  else if (tab.id === 'overview') main.replaceChildren(head, planGauges(), empty);
+  else if (tab.id === 'overview') main.replaceChildren(head, overviewPage());
   else main.replaceChildren(head, empty);
   if (tab.id === 'settings') {
     void settingsLive().then((box) => empty.querySelector('.side')?.append(box));

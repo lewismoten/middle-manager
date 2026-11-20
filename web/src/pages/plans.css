@@ -363,3 +363,19 @@ table.data td.num {
   border-radius: 2px;
   margin-right: 6px;
 }
+
+.overview-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.overview-panels .pg-kv {
+  overflow-wrap: anywhere;
+}
+.overview-count {
+  font: 600 1.6rem var(--mono);
+}
+.overview-panels .pg-kv {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
