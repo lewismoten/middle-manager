@@ -1,6 +1,7 @@
 // Runs (SPEC 5 and 6): one row per agent run, reported through the API and/or discovered by
 // collectors. A reported run and a discovered process with the same machine + pid are one run.
 
+import { checkQuery } from '../http/query.ts';
 import type { Db } from '../db/index.ts';
 import { HttpError } from '../http/app.ts';
 import { matchProject, projectRepos, worktreeOrigin } from './projects.ts';
@@ -318,6 +319,7 @@ export function patchRun(db: Db, id: number, body: unknown, now = new Date()): W
 
 export interface RunFilters {
   active?: boolean;
+  finished?: boolean;
   /** Open runs plus runs that ended within this many hours. */
   finished_within_h?: number;
   machine?: string;
@@ -332,6 +334,26 @@ export interface RunFilters {
 }
 
 export function parseFilters(q: URLSearchParams): RunFilters {
+  const flags = ['0', '1', 'false', 'true'];
+  checkQuery(
+    q,
+    {
+      active: flags,
+      finished: flags,
+      status: RUN_STATUSES,
+      role: ROLES,
+      kind: AGENT_KINDS,
+      machine: null,
+      task: null,
+      model: null,
+      project: null,
+      parent: null,
+      limit: null,
+      hours: null,
+      finished_within_h: null,
+    },
+    'invalid',
+  );
   const f: RunFilters = {};
   const str = (k: string) => {
     const v = q.get(k);
@@ -339,10 +361,13 @@ export function parseFilters(q: URLSearchParams): RunFilters {
   };
   const active = str('active');
   if (active !== undefined) f.active = active === '1' || active === 'true';
-  const hours = str('finished_within_h') ?? str('hours');
-  if (hours !== undefined) {
+  const finished = str('finished');
+  if (finished !== undefined) f.finished = finished === '1' || finished === 'true';
+  for (const key of ['hours', 'finished_within_h']) {
+    const hours = q.get(key);
+    if (hours === null) continue;
     const n = Number(hours);
-    if (!Number.isFinite(n) || n <= 0 || n > 24 * 366) bad('finished_within_h must be hours > 0');
+    if (!Number.isFinite(n) || n <= 0 || n > 24 * 366) bad(key + ' must be hours > 0 and <= 8784');
     f.finished_within_h = n;
   }
   f.machine = str('machine');
@@ -350,19 +375,15 @@ export function parseFilters(q: URLSearchParams): RunFilters {
   f.model = str('model');
   f.project = str('project');
   f.role = str('role');
-  if (f.role && !(ROLES as readonly string[]).includes(f.role))
-    bad(`role must be one of: ${ROLES.join(', ')}`);
   f.kind = str('kind');
-  if (f.kind && !(AGENT_KINDS as readonly string[]).includes(f.kind))
-    bad(`kind must be one of: ${AGENT_KINDS.join(', ')}`);
   f.status = str('status');
-  const parent = str('parent');
-  if (parent !== undefined) {
+  const parent = q.get('parent');
+  if (parent !== null) {
     if (!/^\d+$/.test(parent)) bad('parent must be a run id');
     f.parent = Number(parent);
   }
-  const limit = str('limit');
-  if (limit !== undefined) {
+  const limit = q.get('limit');
+  if (limit !== null) {
     const n = Number(limit);
     if (!Number.isInteger(n) || n < 1) bad('limit must be a whole number >= 1');
     f.limit = Math.min(n, 2000);
@@ -415,6 +436,8 @@ const SELECT = `SELECT r.*, t.short_name AS task_short_name, t.title AS task_tit
 export function listRuns(db: Db, f: RunFilters, now = new Date()): RunView[] {
   const where: string[] = [];
   const args: (string | number)[] = [];
+  if (f.finished !== undefined)
+    where.push(f.finished ? 'r.ended_at IS NOT NULL' : 'r.ended_at IS NULL');
   if (f.finished_within_h !== undefined) {
     where.push('(r.ended_at IS NULL OR r.ended_at >= ?)');
     args.push(new Date(now.getTime() - f.finished_within_h * 3600_000).toISOString());

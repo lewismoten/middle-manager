@@ -47,7 +47,11 @@ components:
         tokens_cache_read: { type: [integer, 'null'], minimum: 0 }
         tokens_cache_write: { type: [integer, 'null'], minimum: 0 }
         role: { enum: [orchestrator, agent, sub-agent, review] }
-        status: { type: string }
+        status:
+          {
+            enum: [running, done, failed, cancelled, ended],
+            description: An ended run vanished with unknown outcome.,
+          }
         agent_kind: { enum: [claude-code, codex, hermes, local, other] }
         task_id: { type: [integer, string] }
         task: { type: [integer, string, 'null'] }
@@ -72,11 +76,24 @@ components:
         prompt_first_line: { type: [string, 'null'] }
         agent_kind: { type: string }
         role: { type: string }
-        status: { type: string }
+        pid:
+          {
+            type: [integer, 'null'],
+            description: Process ID on machine_id when known. Read from the active runs list or run detail.,
+          }
+        status:
+          {
+            enum: [running, done, failed, cancelled, ended],
+            description: An ended run vanished with unknown outcome.,
+          }
         started_at: { type: string }
         ended_at: { type: [string, 'null'] }
         duration_s: { type: integer }
-        tokens_total: { type: integer }
+        tokens_total:
+          {
+            type: integer,
+            description: The session-tokens collector reads harness logs. Agents should omit token counts from reports.,
+          }
     RunDetail:
       allOf:
         - { $ref: '#/components/schemas/Run' }
@@ -196,7 +213,11 @@ paths:
         - { in: query, name: limit, schema: { type: integer, minimum: 0, default: 200 } }
         - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
         - { in: query, name: include_body, schema: { type: string, enum: ['1'] } }
-        - { in: query, name: status, schema: { type: string } }
+        - {
+            in: query,
+            name: status,
+            schema: { enum: [backlog, todo, doing, review, blocked, done] },
+          }
         - { in: query, name: project, schema: { type: string } }
         - { in: query, name: assignee, schema: { type: string } }
         - { in: query, name: sprint, schema: { type: string } }
@@ -205,7 +226,7 @@ paths:
           schema: { type: string }
           description: Case-insensitive substring
       responses:
-        '400': { description: Unknown parameter or invalid pagination }
+        '400': { description: Unknown parameter or invalid query value }
         '200':
           description: Matching tasks in descending id order with body_first_line (256 characters maximum); body requires include_body=1
           content:
@@ -433,7 +454,16 @@ paths:
   /external-jobs:
     get:
       summary: Read-only mirror of Hermes cron and systemd timers, with read time and staleness
+      parameters:
+        - { in: query, name: kind, schema: { enum: [hermes-cron, systemd-timers] } }
+        - {
+            in: query,
+            name: status,
+            schema: { enum: [running, ok, failed, error] },
+            description: Last reported status before any parenthesized detail.,
+          }
       responses:
+        '400': { description: Unknown parameter or invalid query value }
         '200':
           description: '{ now, jobs[] }'
           content:
@@ -687,9 +717,21 @@ paths:
           description: Task ID, short name, or external reference
         - { in: query, name: role, schema: { type: string } }
         - { in: query, name: kind, schema: { type: string } }
-        - { in: query, name: status, schema: { type: string } }
+        - {
+            in: query,
+            name: status,
+            schema:
+              {
+                enum: [running, done, failed, cancelled, ended],
+                description: An ended run vanished with unknown outcome.,
+              },
+          }
         - { in: query, name: parent, schema: { type: integer } }
         - { in: query, name: active, schema: { enum: ['1', 'true', '0', 'false'] } }
+        - in: query
+          name: finished
+          schema: { enum: ['1', 'true', '0', 'false'] }
+          description: Select closed runs with 1 or true and open runs with 0 or false.
         - in: query
           name: finished_within_h
           schema: { type: number }
@@ -703,6 +745,7 @@ paths:
           schema: { type: integer, minimum: 1, default: 500 }
           description: Capped at 2000
       responses:
+        '400': { description: Unknown parameter or invalid query value }
         '200':
           description: List matching runs, newest first
           content:
@@ -812,7 +855,16 @@ paths:
   /plans/pace:
     get:
       summary: Read weekly pacing and the latest five-hour reading per plan
+      parameters:
+        - { in: query, name: plan, schema: { type: string }, description: Configured plan ID. }
+        - {
+            in: query,
+            name: model,
+            schema: { type: string },
+            description: Configured model. Returns plans that include it.,
+          }
       responses:
+        '400': { description: Unknown parameter or invalid query value }
         '200':
           description: Read weekly pacing and the latest five-hour reading per plan
           content:
