@@ -90,6 +90,26 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
     tabindex: '0',
     'aria-label': 'Mirrored schedules',
   });
+  const priorities = ['failed', 'stuck', 'overdue'] as const;
+  const order = [...priorities, null];
+  function byAttention(a: Job | ExternalJob, b: Job | ExternalJob) {
+    return order.indexOf(a.attention) - order.indexOf(b.attention);
+  }
+  function countText(items: (Job | ExternalJob)[]) {
+    const counts = priorities.flatMap((key) => {
+      const count = items.filter((j) => j.attention === key).length;
+      return count ? [`${count} ${key === 'failed' ? 'failing' : key}`] : [];
+    });
+    return counts.length ? `${items.length} · ${counts.join(' - ')}` : String(items.length);
+  }
+  function pausedGroup(container: HTMLElement, count: number, ...children: HTMLElement[]) {
+    return h(
+      'details',
+      { class: 'paused-jobs', open: !!container.querySelector('details[open]') },
+      h('summary', {}, `Paused (${count})`),
+      ...children,
+    );
+  }
   const ownCount = h('span', { class: 'muted count' });
   const extCount = h('span', { class: 'muted count' });
   const grid = h(
@@ -172,7 +192,7 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
 
   function renderOwn(): void {
     const n = now();
-    ownCount.textContent = ` ${jobs.length}`;
+    ownCount.textContent = countText(jobs);
     if (!jobs.length) {
       ownList.replaceChildren(
         h(
@@ -207,14 +227,15 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
       ),
     );
     const body = h('tbody', {});
-    for (const job of jobs) {
+    const paused = h('tbody', {});
+    for (const job of [...jobs].sort(byAttention)) {
       const open = h(
         'button',
         { type: 'button', class: 'link job-open', 'data-job': job.id },
         job.name,
       );
       open.addEventListener('click', () => void openSheet(job.id));
-      body.append(
+      (job.enabled ? body : paused).append(
         h(
           'tr',
           { class: `job${job.enabled ? '' : ' disabled'}`, 'data-job-id': job.id },
@@ -226,6 +247,7 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
               'span',
               { class: 'tags' },
               h('span', { class: 'chip' }, kindLabel(job)),
+              job.attention && job.attention !== 'failed' ? chip('block', job.attention) : null,
               job.enabled ? null : h('span', { class: 'chip st-muted' }, 'disabled'),
             ),
           ),
@@ -245,15 +267,18 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
         ),
       );
     }
+    const pausedTable = table.cloneNode(true) as HTMLTableElement;
+    pausedTable.append(paused);
     table.append(body);
-    ownList.replaceChildren(table);
+    const group = pausedGroup(ownList, paused.childElementCount, pausedTable);
+    ownList.replaceChildren(table, ...(paused.childElementCount ? [group] : []));
   }
 
   // ---- Mirror ----
 
   function renderExternal(): void {
     const n = now();
-    extCount.textContent = ` ${external.length}`;
+    extCount.textContent = countText(external);
     const mirrors = (ctx.config?.collectors ?? []).filter(
       (c) => c.kind === 'hermes-cron' || c.kind === 'systemd-timers',
     );
@@ -273,53 +298,60 @@ export function mountSchedules(main: HTMLElement, ctx: Ctx): () => void {
       );
       return;
     }
-    const nodes: HTMLElement[] = [];
-    for (const g of groupExternal(external)) {
-      const list = h('ul', { class: 'ext-list' });
-      for (const j of g.jobs) {
-        list.append(
+    function sections(items: ExternalJob[]) {
+      const nodes: HTMLElement[] = [];
+      for (const g of groupExternal(items)) {
+        const list = h('ul', { class: 'ext-list' });
+        for (const j of g.jobs) {
+          list.append(
+            h(
+              'li',
+              { class: `ext${j.enabled ? '' : ' disabled'}`, 'data-external-id': j.external_id },
+              h(
+                'div',
+                { class: 'ext-top' },
+                h('b', { class: 'ext-name' }, j.name),
+                j.enabled ? null : h('span', { class: 'chip st-muted' }, 'paused'),
+                j.attention && j.attention !== 'failed' ? chip('block', j.attention) : null,
+                j.last_status ? chip(externalTone(j.last_status), j.last_status) : null,
+              ),
+              h(
+                'div',
+                { class: 'ext-meta' },
+                j.schedule ? h('code', {}, j.schedule) : muted('no schedule'),
+                h('span', {}, 'next ', j.enabled ? when(j.next_run_at, n) : muted()),
+                h('span', {}, 'last ', when(j.last_run_at, n)),
+              ),
+              j.command ? h('div', { class: 'ext-cmd muted', title: j.command }, j.command) : null,
+              j.name !== j.external_id ? h('div', { class: 'small muted' }, j.external_id) : null,
+            ),
+          );
+        }
+        nodes.push(
           h(
-            'li',
-            { class: `ext${j.enabled ? '' : ' disabled'}`, 'data-external-id': j.external_id },
+            'section',
+            { class: 'ext-group', 'data-source': g.source },
             h(
-              'div',
-              { class: 'ext-top' },
-              h('b', { class: 'ext-name' }, j.name),
-              j.enabled ? null : h('span', { class: 'chip st-muted' }, 'paused'),
-              j.last_status ? chip(externalTone(j.last_status), j.last_status) : null,
+              'h3',
+              {},
+              sourceLabel(g.kind),
+              h(
+                'span',
+                { class: 'muted' },
+                ` · ${g.source}${g.machine_id ? ` on ${g.machine_id}` : ''}`,
+              ),
+              h('span', { class: 'read-at' }, ' read ', when(g.read_at, n)),
+              g.stale ? h('span', { class: 'chip st-block stale' }, 'stale') : null,
             ),
-            h(
-              'div',
-              { class: 'ext-meta' },
-              j.schedule ? h('code', {}, j.schedule) : muted('no schedule'),
-              h('span', {}, 'next ', j.enabled ? when(j.next_run_at, n) : muted()),
-              h('span', {}, 'last ', when(j.last_run_at, n)),
-            ),
-            j.command ? h('div', { class: 'ext-cmd muted', title: j.command }, j.command) : null,
-            j.name !== j.external_id ? h('div', { class: 'small muted' }, j.external_id) : null,
+            list,
           ),
         );
       }
-      nodes.push(
-        h(
-          'section',
-          { class: 'ext-group', 'data-source': g.source },
-          h(
-            'h3',
-            {},
-            sourceLabel(g.kind),
-            h(
-              'span',
-              { class: 'muted' },
-              ` · ${g.source}${g.machine_id ? ` on ${g.machine_id}` : ''}`,
-            ),
-            h('span', { class: 'read-at' }, ' read ', when(g.read_at, n)),
-            g.stale ? h('span', { class: 'chip st-block stale' }, 'stale') : null,
-          ),
-          list,
-        ),
-      );
+      return nodes;
     }
+    const nodes = sections(external.filter((j) => j.enabled).sort(byAttention));
+    const paused = external.filter((j) => !j.enabled);
+    if (paused.length) nodes.push(pausedGroup(extList, paused.length, ...sections(paused)));
     extList.replaceChildren(...nodes);
   }
 

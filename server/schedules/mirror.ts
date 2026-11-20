@@ -6,6 +6,7 @@
 // re-reading never duplicates a job. A failed read keeps the last rows; their read_at shows the age.
 // Nothing here can start, stop or edit the mirrored jobs.
 
+import { attentionFor, type Attention } from './attention.ts';
 import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -91,7 +92,7 @@ export function parseHermesCron(text: string): ExternalJob[] {
     const command = script
       ? `script: ${redactSecrets(script)}`
       : `agent prompt${model ? ` · ${model}` : ''}`;
-    let last_status = str(j.last_status);
+    let last_status = state === 'running' ? 'running' : str(j.last_status);
     if (state === 'completed' && last_status === 'ok') last_status = 'ok (completed)';
     out.push({
       external_id: id,
@@ -434,6 +435,7 @@ export function scheduleMirrors(
 }
 
 export interface ExternalJobView extends ExternalJob {
+  attention: Attention;
   id: number;
   source: string;
   kind: string | null;
@@ -446,7 +448,7 @@ export interface ExternalJobView extends ExternalJob {
 export function listExternal(db: Db, config: Config, now = new Date()): ExternalJobView[] {
   const rows = db
     .prepare('SELECT * FROM external_jobs ORDER BY source, enabled DESC, name COLLATE NOCASE')
-    .all() as unknown as (Omit<ExternalJobView, 'enabled' | 'stale' | 'kind'> & {
+    .all() as unknown as (Omit<ExternalJobView, 'attention' | 'enabled' | 'stale' | 'kind'> & {
     enabled: number | null;
   })[];
   const bySource = new Map(config.collectors.map((c) => [c.id, c]));
@@ -456,6 +458,7 @@ export function listExternal(db: Db, config: Config, now = new Date()): External
     return {
       ...r,
       enabled: r.enabled === 1,
+      attention: attentionFor({ ...r, enabled: r.enabled === 1 }, now),
       kind: c?.kind ?? null,
       stale: now.getTime() - Date.parse(r.read_at) > 2 * every * 1000 + 30_000,
     };

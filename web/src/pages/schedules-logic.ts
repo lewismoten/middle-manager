@@ -23,7 +23,9 @@ export interface JobRun extends RunSummary {
   output: string;
 }
 
+export type Attention = 'failed' | 'stuck' | 'overdue' | null;
 export interface Job {
+  attention: Attention;
   id: number;
   name: string;
   schedule: string;
@@ -52,6 +54,7 @@ export interface JobsResponse {
 }
 
 export interface ExternalJob {
+  attention: Attention;
   id: number;
   source: string;
   kind: string | null;
@@ -113,12 +116,12 @@ export interface ExternalGroup {
   jobs: ExternalJob[];
 }
 
-/** Groups mirrored jobs by source; the group's read time is its oldest row's. */
+/** Groups adjacent mirrored jobs without changing their attention order; the group's read time is its oldest row's. */
 export function groupExternal(jobs: ExternalJob[]): ExternalGroup[] {
-  const groups = new Map<string, ExternalGroup>();
+  const groups: ExternalGroup[] = [];
   for (const j of jobs) {
-    let g = groups.get(j.source);
-    if (!g) {
+    let g = groups.at(-1);
+    if (!g || g.source !== j.source) {
       g = {
         source: j.source,
         kind: j.kind,
@@ -127,13 +130,13 @@ export function groupExternal(jobs: ExternalJob[]): ExternalGroup[] {
         stale: false,
         jobs: [],
       };
-      groups.set(j.source, g);
+      groups.push(g);
     }
     g.jobs.push(j);
     if (j.read_at < g.read_at) g.read_at = j.read_at;
     g.stale ||= j.stale;
   }
-  return [...groups.values()];
+  return groups;
 }
 
 export function summaryText(jobs: Job[], external: ExternalJob[]): string {

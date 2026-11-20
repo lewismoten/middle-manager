@@ -2,6 +2,7 @@
 //   kind collector: runs a configured collector (built-in code only)
 //   kind shell:     runs a command with /bin/sh as the service user; needs the jobs:shell scope
 
+import { attentionFor, type Attention } from './attention.ts';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/index.ts';
 import { HttpError } from '../http/app.ts';
@@ -77,6 +78,7 @@ export function summarizeRun(r: JobRunRow): RunSummary {
 }
 
 export interface JobView extends Omit<JobRow, 'enabled'> {
+  attention: Attention;
   enabled: boolean;
   /** The time zone the schedule is read in (the job's, else the site's). */
   effective_timezone: string;
@@ -316,12 +318,25 @@ export function viewJob(
        AND ended_at IS NOT NULL AND (exit_code IS NULL OR exit_code <> 0)`,
     )
     .get(job.id, since) as { n: number };
+  const next_run_at = job.enabled === 1 ? nextRun(job.schedule, tz, now) : null;
+  const last_run = last ? summarizeRun(last) : null;
   return {
     ...job,
     enabled: job.enabled === 1,
     effective_timezone: tz,
-    next_run_at: job.enabled === 1 ? nextRun(job.schedule, tz, now) : null,
-    last_run: last ? summarizeRun(last) : null,
+    next_run_at,
+    last_run,
+    attention: attentionFor(
+      {
+        enabled: job.enabled === 1,
+        schedule: job.schedule,
+        timezone: tz,
+        last_run_at: last_run?.started_at ?? null,
+        last_status: running ? 'running' : (last_run?.status ?? null),
+        next_run_at,
+      },
+      now,
+    ),
     running,
     failed_24h: Number(failed.n),
   };

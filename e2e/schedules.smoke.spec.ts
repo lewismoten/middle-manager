@@ -52,20 +52,37 @@ test('schedules: own jobs with last runs, next to the read-only mirror', async (
   await expect(cleanup.locator('button.run-now')).toBeDisabled();
   await expect(page.locator('#job-new')).toBeHidden();
 
-  // Mirror: grouped by source, nothing duplicated, statuses and paused jobs marked.
-  const groups = page.locator('.ext-group');
-  await expect(groups).toHaveCount(2);
-  await expect(groups.nth(0).locator('h3')).toContainText('Hermes cron');
-  await expect(groups.nth(1).locator('h3')).toContainText('systemd timers');
-  await expect(groups.nth(0).locator('li.ext')).toHaveCount(3);
-  await expect(groups.nth(1).locator('li.ext')).toHaveCount(2);
+  const list = page.locator('#external-jobs-list');
+  const rows = list.locator('li.ext');
+  await expect(rows.nth(0)).toHaveAttribute('data-external-id', 'sample-poll.timer');
+  await expect(rows.nth(1)).toHaveAttribute('data-external-id', 'sample-index.timer');
+  if (info.project.name === '1440-light') {
+    for (const row of [rows.nth(0), rows.nth(1)]) await expect(row).toBeInViewport({ ratio: 1 });
+    expect(await list.evaluate((el) => el.scrollTop)).toBe(0);
+  }
+  await expect(page.locator('#external-jobs-title')).toContainText('1 failing - 1 stuck');
+  await expect(list.locator('details summary')).toHaveText('Paused (5)');
+  await expect(list.locator('details li.ext:visible')).toHaveCount(0);
+  const response = await page.request.get('/api/v1/external-jobs');
+  expect(response.ok()).toBe(true);
+  const { jobs } = await response.json();
+  expect(jobs).toHaveLength(10);
+  for (const job of jobs) {
+    const expected =
+      job.external_id === 'sample-poll.timer'
+        ? 'failed'
+        : job.external_id === 'sample-index.timer'
+          ? 'stuck'
+          : null;
+    expect(job.attention).toBe(expected);
+  }
   await expect(page.locator('li.ext[data-external-id="h2"]')).toContainText('paused');
   await expect(
     page.locator('li.ext[data-external-id="sample-poll.timer"] .chip.st-block'),
   ).toHaveText('failed (exit 1)');
   await expect(page.locator('#external-jobs .chip.ro')).toHaveText('read-only');
   await expect(page.locator('#schedules-summary')).toContainText('1 failed run in 24 h');
-  await expect(page.locator('#schedules-summary')).toContainText('5 mirrored');
+  await expect(page.locator('#schedules-summary')).toContainText('10 mirrored');
 
   await page.evaluate(() => document.fonts.ready);
   expect(await overflow(page)).toBeLessThanOrEqual(0);
@@ -73,6 +90,8 @@ test('schedules: own jobs with last runs, next to the read-only mirror', async (
     expect(await page.locator(id).evaluate((el) => getComputedStyle(el).overflowY)).toBe('auto');
   }
   await page.screenshot({ path: `${SHOTS}/schedules-${info.project.name}.png`, fullPage: true });
+  await list.locator('summary').click();
+  await expect(list.locator('details li.ext:visible')).toHaveCount(5);
   expect(problems).toEqual([]);
 });
 
