@@ -383,3 +383,16 @@ table.data td.num {
 .overview-panels .pg-kv {
   grid-template-columns: minmax(0, 1fr) auto;
 }
+
+.visit-changes {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}

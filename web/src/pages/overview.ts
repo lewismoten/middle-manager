@@ -1,4 +1,5 @@
 // Overview: one gauge per plan (used, even pace, projection, mode, reset countdown, reading age).
+import type { Changes } from '../../../shared/changes.ts';
 import { api, listTasks } from '../api.ts';
 import { STATUSES, type Task } from './board-logic.ts';
 import type { RunView } from './agents-logic.ts';
@@ -78,6 +79,53 @@ function card(p: PlanPace, now: number): HTMLElement {
   );
 }
 
+async function showVisitChanges(root: HTMLElement) {
+  const key = 'mm.lastVisit';
+  let visit = new Date().toISOString();
+  try {
+    const since = localStorage.getItem(key);
+    if (since && Number.isFinite(Date.parse(since))) {
+      const changes = await api<Changes>(
+        '/changes?since=' + encodeURIComponent(new Date(since).toISOString()),
+      );
+      if (!root.isConnected || localStorage.getItem(key) !== since) return;
+      visit = changes.now;
+      const parts: string[] = [];
+      function count(n: number, noun: string, action: string) {
+        if (n) parts.push(`${n} ${noun}${n === 1 ? '' : 's'} ${action}`);
+      }
+      count(changes.runs.total, 'run', 'finished');
+      count(changes.cards.total, 'card', 'moved');
+      count(changes.jobs.total, 'job', 'newly failing');
+      for (const plan of changes.plans.items.slice(0, 2)) {
+        const delta = plan.used_pct - plan.previous_pct;
+        parts.push(
+          `${plan.name} ${delta.toLocaleString('en-US', { signDisplay: 'always', maximumFractionDigits: 2 })}%`,
+        );
+      }
+      count(Math.max(0, changes.plans.total - 2), 'other plan', 'changed');
+      if (parts.length) {
+        const dismiss = h(
+          'button',
+          { type: 'button', 'aria-label': 'Dismiss visit summary' },
+          'Dismiss',
+        );
+        const strip = h(
+          'aside',
+          { class: 'visit-changes', 'aria-label': 'Since your last visit' },
+          h('span', {}, h('strong', {}, 'Since your last visit: '), parts.join(', ')),
+          dismiss,
+        );
+        dismiss.onclick = () => strip.remove();
+        root.prepend(strip);
+      }
+    }
+    localStorage.setItem(key, visit);
+  } catch {
+    // Keep the last successful visit when storage or the request is unavailable.
+  }
+}
+
 export function overviewPage(): HTMLElement {
   const grid = h('div', { class: 'plan-gauges', 'aria-live': 'polite' });
   const section = h(
@@ -93,6 +141,7 @@ export function overviewPage(): HTMLElement {
   );
   const panels = h('div', { class: 'overview-panels' });
   const root = h('div', {}, section, panels);
+  void showVisitChanges(root);
   function panel(title: string) {
     const body = h('div', { 'aria-live': 'polite' }, 'Loading…');
     panels.append(h('section', { class: 'box' }, h('h2', { class: 'box-h' }, title), body));

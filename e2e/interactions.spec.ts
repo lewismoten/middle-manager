@@ -191,3 +191,38 @@ test('Burndown shows the same recent rate in its summary and table', async ({ pa
   await expect(summary).toContainText('Last 24 h: 0.47%/h');
   await expect(summary).toContainText('3 pts ahead of even pace');
 });
+
+test('Overview summarizes the previous visit once and can be dismissed', async ({ page }) => {
+  await page.goto('/#/overview');
+  const strip = page.getByRole('complementary', { name: 'Since your last visit' });
+  await expect(strip).toHaveCount(0);
+  async function revisit(timestamp: string) {
+    await page.evaluate((value) => localStorage.setItem('mm.lastVisit', value), timestamp);
+    const response = page.waitForResponse((r) => r.url().includes('/api/v1/changes?since='));
+    await page.reload();
+    const { now } = await (await response).json();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('mm.lastVisit'))).toBe(now);
+  }
+  const yesterday = new Date(Date.now() - 86400000).toISOString();
+  await revisit(yesterday);
+  await expect(strip).toContainText('1 job newly failing');
+  await expect(strip).toContainText('Plan B +18%');
+  await expect(page.locator('.plan-gauge').first()).toBeVisible();
+  await page.screenshot({ path: 'test-results/mr20-5/overview.png' });
+  const stored = await page.evaluate(() => localStorage.getItem('mm.lastVisit')!);
+  const next = page.waitForResponse((r) => r.url().includes('/api/v1/changes?since='));
+  await page.reload();
+  const response = await next;
+  expect(new URL(response.url()).searchParams.get('since')).toBe(stored);
+  const { now } = await response.json();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mm.lastVisit'))).toBe(now);
+  await expect(strip).toHaveCount(0);
+  await revisit(new Date().toISOString());
+  await expect(strip).toHaveCount(0);
+  await revisit(new Date(Date.now() - 3600000).toISOString());
+  await expect(strip).toContainText(/runs? finished/);
+  await expect(page.locator('.plan-gauge').first()).toBeVisible();
+  await page.screenshot({ path: 'test-results/mr20-5/recent-runs.png' });
+  await strip.getByRole('button', { name: 'Dismiss visit summary' }).click();
+  await expect(strip).toHaveCount(0);
+});
