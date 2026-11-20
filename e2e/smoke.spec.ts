@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
+import type { Task } from '../web/src/pages/board-logic.ts';
+import type { ExternalJob } from '../web/src/pages/schedules-logic.ts';
+import type { PlanPace } from '../web/src/plans.ts';
+import type { ConnectionsResponse } from '../web/src/pages/connections-logic.ts';
 import { TABS } from '../web/src/tabs.ts';
 
 const SHOTS = 'test-results/screenshots';
@@ -57,13 +61,51 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
       if ((page.viewportSize()?.width ?? 0) <= 600)
         await page.getByLabel('Column', { exact: true }).selectOption('doing');
       await expect(page.getByRole('button', { name: /Review queue metrics/ })).toBeVisible();
-    } else {
+    } else if (tab.id !== 'overview') {
       await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
       if (tab.id === 'settings')
         await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
       else await expect(page.locator('.box .box-h', { hasText: 'From your config' })).toBeVisible();
     }
     if (tab.id === 'overview') {
+      const [active, tasks, owned, mirror, pace, connections] = await Promise.all(
+        ['/runs?active=1', '/tasks', '/jobs', '/external-jobs', '/plans/pace', '/connections'].map(
+          async (path) => {
+            const response = await page.request.get('/api/v1' + path);
+            expect(response.ok()).toBe(true);
+            return response.json();
+          },
+        ),
+      );
+      const failed =
+        owned.failed_24h +
+        mirror.jobs.filter((j: ExternalJob) => {
+          const age = Date.parse(mirror.now) - Date.parse(j.last_run_at ?? '');
+          return /^(error|fail)/.test(j.last_status ?? '') && age >= 0 && age <= 86400000;
+        }).length;
+      const conn: ConnectionsResponse = connections;
+      const attention =
+        tasks.filter((t: Task) => t.status === 'blocked').length +
+        failed +
+        pace.plans.filter((p: PlanPace) => p.weekly?.stale).length +
+        [...conn.plans, ...conn.local_models].filter((c) => ['warn', 'down'].includes(c.status))
+          .length;
+      const panels = page.locator('.overview-panels');
+      await expect(panels.locator('.overview-count')).toHaveText(
+        [active.runs.length, tasks.length, failed, attention].map(String),
+      );
+      for (const status of ['backlog', 'todo', 'doing', 'review', 'blocked', 'done']) {
+        await expect(panels.getByText(status, { exact: true }).locator('+ dd')).toHaveText(
+          String(tasks.filter((t: Task) => t.status === status).length),
+        );
+      }
+      await expect(page.locator('body')).not.toContainText(
+        /placeholder|nothing here yet|what will appear here|from your config|\bS[345]\b/i,
+      );
+      if (page.viewportSize()?.width === 1440)
+        expect(
+          await page.evaluate(() => document.documentElement.scrollHeight),
+        ).toBeLessThanOrEqual(900);
       await expect(page.locator('.plan-gauge')).toHaveCount(3);
       await expect(page.locator('.plan-gauge[data-plan="plan-a"] .mode')).toHaveText(
         /burn|steady|conserve|stop/,
@@ -82,7 +124,10 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
     expect(fontsLoaded).toContain('IBM Plex Sans');
 
     expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
-    await page.screenshot({ path: `${SHOTS}/${tab.id}-${info.project.name}.png`, fullPage: true });
+    await page.screenshot({
+      path: `${SHOTS}/${tab.id}-${info.project.name}.png`,
+      fullPage: tab.id !== 'overview',
+    });
     expect(problems).toEqual([]);
   });
 }

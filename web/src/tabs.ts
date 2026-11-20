@@ -19,7 +19,7 @@ export interface Tab {
 }
 
 /** Slices merged into this build; their items show as here now. */
-export const SHIPPED = new Set(['S1', 'S2']);
+export const SHIPPED = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']);
 
 export const SLICES: Record<string, string> = {
   S1: 'foundation',
