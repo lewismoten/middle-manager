@@ -363,8 +363,12 @@ export function validateConfig(raw: unknown, source = '<memory>'): Config {
       sessions_dir: c.str(p, 'sessions_dir', w, false),
       windows,
       empty_buffer_hours: c.num(p, 'empty_buffer_hours', w, 1, { min: 0, max: 168 }),
-      window_hours: c.num(p, 'window_hours', w, 168, { min: 1, max: 744 }),
+      // Resets within 3 h of each other count as one window, so a window cannot be that short.
+      window_hours: c.num(p, 'window_hours', w, 168, { min: 24, max: 744 }),
     };
+    if (plan.empty_buffer_hours >= plan.window_hours) {
+      c.fail(`${w}.empty_buffer_hours`, 'must be less than window_hours');
+    }
     if (provider === 'anthropic-oauth' && !plan.credentials) {
       c.fail(
         `${w}.credentials`,

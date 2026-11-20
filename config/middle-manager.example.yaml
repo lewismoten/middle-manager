@@ -25,7 +25,7 @@ plans: # subscriptions to pace
     credentials: ~/.claude/.credentials.json
     windows: [weekly, five_hour]
     empty_buffer_hours: 1 # aim to run out this long before the reset
-    window_hours: 168 # weekly window length (default 7 days); past weeks align on it
+    window_hours: 168 # weekly window length, 24 to 744 (default 7 days); past weeks align on it
   - id: codex
     name: 'Codex plan'
     provider: codex-sessions
