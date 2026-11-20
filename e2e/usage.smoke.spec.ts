@@ -39,7 +39,9 @@ test('usage: tokens by plan and model, runs per day, cost notes', async ({
   const rows = page.locator('table.usage-table tbody tr');
   await expect(rows).toHaveCount(3);
   await expect(rows.nth(0)).toContainText('Plan A');
-  await expect(page.locator('tr[data-key="plan-b|medium"]')).toContainText('Plan B');
+  const codex = page.locator('tr[data-key="plan-b|medium"]');
+  await expect(codex).toContainText('Plan B');
+  expect(Number(await codex.locator('td').nth(1).textContent())).toBeGreaterThanOrEqual(20);
   await expect(page.locator('#usage-summary')).toContainText(
     /tokens \(in \+ out\) · \d+ runs started · 2 plans/,
   );

@@ -2,7 +2,11 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { runAgentCollectors, type CollectorEnv } from '../server/agents/collect.ts';
+import {
+  backfillCodexTokens,
+  runAgentCollectors,
+  type CollectorEnv,
+} from '../server/agents/collect.ts';
 import {
   argvDetails,
   cleanRemote,
@@ -437,6 +441,42 @@ describe('token readers', () => {
       tokens_cache_write: 0,
       model: 'model-medium',
     });
+  });
+
+  it('backfills a Codex session starting 14 minutes after its unit, once', () => {
+    const day = path.join(codexDir, '2026', '11', '19');
+    mkdirSync(day, { recursive: true });
+    const run = {
+      machine_id: 'server-1',
+      agent_kind: 'codex',
+      worktree: '/work/delayed',
+      started_at: T0,
+    };
+    const ended_at = '2026-11-19T12:13:00.000Z';
+    writeFileSync(
+      path.join(day, 'rollout-delayed.jsonl'),
+      jsonl(
+        {
+          type: 'session_meta',
+          payload: { cwd: run.worktree, id: 'delayed', timestamp: '2026-11-19T12:14:00.000Z' },
+        },
+        {
+          type: 'event_msg',
+          payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 123 } } },
+        },
+      ),
+    );
+    expect(
+      codexReader.locate({ ...run, log_ref: null, ended_at: '2026-11-19T12:12:59.999Z' }, dirs),
+    ).toBeNull();
+    const db = memoryDb(testConfig());
+    const { id } = startRun(db, run).run;
+    db.prepare('UPDATE runs SET ended_at = ? WHERE id = ?').run(ended_at, id);
+    const tail = new SessionTail();
+    expect(backfillCodexTokens(db, run.machine_id, dirs, tail)).toBe(1);
+    expect(backfillCodexTokens(db, run.machine_id, dirs, tail)).toBe(0);
+    expect(listRuns(db, {})[0]).toMatchObject({ id, tokens_in: 123, log_ref: 'codex:delayed' });
+    db.close();
   });
 
   it('picks a reader by log_ref prefix, then by agent kind', () => {

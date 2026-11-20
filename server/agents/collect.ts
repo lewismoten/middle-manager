@@ -169,6 +169,10 @@ export function readSessionTokens(
        AND agent_kind IN ('claude-code', 'codex')${opts.missingModel ? ' AND model IS NULL' : ''}`,
     )
     .all(machine, since) as unknown as RunRow[];
+  return applySessionLogs(db, runs, dirs, tail);
+}
+
+function applySessionLogs(db: Db, runs: RunRow[], dirs: ReaderDirs, tail: SessionTail): number {
   let n = 0;
   for (const run of runs) {
     const reader = readerFor(run);
@@ -201,6 +205,22 @@ export async function runAgentCollectors(
   return out;
 }
 
+/** Recover ended Codex runs missed by earlier collectors, once at startup. */
+export function backfillCodexTokens(
+  db: Db,
+  machine: string,
+  dirs: ReaderDirs,
+  tail: SessionTail,
+): number {
+  const runs = db
+    .prepare(
+      `SELECT * FROM runs WHERE machine_id = ? AND agent_kind = 'codex'
+     AND ended_at IS NOT NULL AND worktree IS NOT NULL AND log_ref IS NULL`,
+    )
+    .all(machine) as unknown as RunRow[];
+  return applySessionLogs(db, runs, dirs, tail);
+}
+
 /** Starts the periodic scan. Returns a stop function. */
 export function scheduleAgentCollectors(
   db: Db,
@@ -210,6 +230,15 @@ export function scheduleAgentCollectors(
 ): () => void {
   const list = agentCollectors(config);
   if (!list.length) return () => {};
+  const sources = new Set<string>();
+  for (const c of list) {
+    const machine = collectorMachine(config, c);
+    const dirs = readerDirs(config, c);
+    const source = JSON.stringify([machine, dirs.codex_dir]);
+    if (sources.has(source)) continue;
+    sources.add(source);
+    backfillCodexTokens(db, machine, dirs, env.tail);
+  }
   const every = Math.max(
     5,
     Math.min(...list.map((c) => (typeof c.every_s === 'number' ? c.every_s : 30))),

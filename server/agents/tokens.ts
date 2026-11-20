@@ -30,7 +30,7 @@ export interface TokenReader<S = unknown> {
   ref: string;
   /** Finds the session file for a run, or null when it cannot be told apart from others. */
   locate(
-    run: Pick<RunRow, 'log_ref' | 'worktree' | 'started_at'>,
+    run: Pick<RunRow, 'log_ref' | 'worktree' | 'started_at'> & Partial<Pick<RunRow, 'ended_at'>>,
     dirs: ReaderDirs,
   ): Located | null;
   init(): S;
@@ -135,19 +135,26 @@ interface CodexState {
   model: string | null;
 }
 
-function codexDays(dir: string, startedAt: string): string[] {
-  const t = Date.parse(startedAt);
-  const days = new Set<string>();
-  for (const offset of [-1, 0, 1]) {
-    const d = new Date(t + offset * 86400_000);
-    // Codex names folders by local date; check both sides of midnight.
-    const local = [d.getFullYear(), d.getMonth() + 1, d.getDate()];
-    const utc = [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()];
-    for (const [y, m, dd] of [local, utc]) {
-      days.add(path.join(dir, String(y), String(m).padStart(2, '0'), String(dd).padStart(2, '0')));
+function codexDays(dir: string, start: number, end: number): string[] {
+  if (!Number.isFinite(start) || Number.isNaN(end)) return [];
+  // Folders use local dates. Include a day on either side of the UTC range.
+  const lower = new Date(start - 86400_000).toISOString().slice(0, 10);
+  const upper = Number.isFinite(end)
+    ? new Date(end + 86400_000).toISOString().slice(0, 10)
+    : '9999-12-31';
+  const days: string[] = [];
+  for (const year of safeReaddir(dir)) {
+    if (year < lower.slice(0, 4) || year > upper.slice(0, 4)) continue;
+    for (const month of safeReaddir(path.join(dir, year))) {
+      const prefix = `${year}-${month}`;
+      if (prefix < lower.slice(0, 7) || prefix > upper.slice(0, 7)) continue;
+      for (const day of safeReaddir(path.join(dir, year, month))) {
+        const date = `${prefix}-${day}`;
+        if (date >= lower && date <= upper) days.push(path.join(dir, year, month, day));
+      }
     }
   }
-  return [...days];
+  return days;
 }
 
 /** Reads just the first line (session_meta) of a Codex session file. */
@@ -179,9 +186,11 @@ export const codexReader: TokenReader<CodexState> = {
     if (id !== null && !/^[A-Za-z0-9-]+$/.test(id)) return null;
     if (ref && id === null) return null;
     const start = Date.parse(run.started_at);
+    const since = start - 60_000;
+    const until = run.ended_at ? Date.parse(run.ended_at) + 60_000 : Infinity;
     let best: { file: string; id: string; gap: number } | null = null;
     let ties = 0;
-    for (const day of codexDays(dirs.codex_dir, run.started_at)) {
+    for (const day of codexDays(dirs.codex_dir, since, until)) {
       for (const f of safeReaddir(day)) {
         if (!f.endsWith('.jsonl')) continue;
         const file = path.join(day, f);
@@ -192,10 +201,16 @@ export const codexReader: TokenReader<CodexState> = {
         if (!run.worktree) continue;
         const meta = obj(firstJsonLine(file)?.payload);
         if (!meta || meta.cwd !== run.worktree) continue;
-        const gap = Math.abs(Date.parse(String(meta.timestamp ?? '')) - start);
-        if (!(gap <= 5 * 60_000)) continue;
+        const time = Date.parse(String(meta.timestamp ?? ''));
+        if (!(time >= since && time <= until)) continue;
+        // Prefer the earliest session after startup, then the closest just before it.
+        const gap = time - start;
         if (best && gap === best.gap) ties++;
-        if (!best || gap < best.gap) {
+        if (
+          !best ||
+          (gap >= 0 && (best.gap < 0 || gap < best.gap)) ||
+          (gap < 0 && gap > best.gap)
+        ) {
           best = { file, id: String(meta.id ?? meta.session_id ?? ''), gap };
           ties = 0;
         }
