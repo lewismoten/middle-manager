@@ -3,6 +3,7 @@
 
 import type { Db } from '../db/index.ts';
 import { HttpError } from '../http/app.ts';
+import { matchProject, projectRepos, worktreeOrigin } from './projects.ts';
 
 export const AGENT_KINDS = ['claude-code', 'codex', 'hermes', 'local', 'other'] as const;
 export const ROLES = ['orchestrator', 'agent', 'sub-agent', 'review'] as const;
@@ -227,19 +228,37 @@ function addSource(current: string | null, more: string): string {
   return [...parts].sort().join('+');
 }
 
+function deriveProject(db: Db, f: RunInput['fields'], existing?: RunRow): void {
+  if (existing && !('origin' in f || 'worktree' in f || 'project_id' in f)) return;
+  const moved = existing?.worktree != null && 'worktree' in f && f.worktree !== existing?.worktree;
+  const cwd = 'worktree' in f ? f.worktree : existing?.worktree;
+  let origin = 'origin' in f ? f.origin : existing?.origin;
+  if (moved && !('origin' in f)) origin = null;
+  if (!origin && typeof cwd === 'string') origin = worktreeOrigin(cwd);
+  if (typeof origin === 'string') {
+    f.origin = origin;
+    f.project_id = matchProject(projectRepos(db), origin);
+  } else if (existing && (moved || 'origin' in f)) {
+    f.origin = null;
+    f.project_id = null;
+  }
+}
+
 function insertRow(db: Db, f: RunInput['fields']): number {
+  deriveProject(db, f);
   const keys = Object.keys(f);
   const sql = `INSERT INTO runs (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`;
   const res = db.prepare(sql).run(...(Object.values(f) as (string | number | null)[]));
   return Number(res.lastInsertRowid);
 }
 
-function updateRow(db: Db, id: number, f: RunInput['fields']): void {
+function updateRow(db: Db, existing: RunRow, f: RunInput['fields']): void {
+  deriveProject(db, f, existing);
   const keys = Object.keys(f);
   if (!keys.length) return;
   db.prepare(`UPDATE runs SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`).run(
     ...(Object.values(f) as (string | number | null)[]),
-    id,
+    existing.id,
   );
 }
 
@@ -269,7 +288,7 @@ export function startRun(db: Db, body: unknown, now = new Date()): WriteResult {
       const patch: RunInput['fields'] = { ...f, source: addSource(open.source, 'api') };
       if (open.source?.includes('process-scan') || open.source?.includes('systemd'))
         delete patch.started_at;
-      updateRow(db, open.id, patch);
+      updateRow(db, open, patch);
       return { run: getRunRow(db, open.id) as RunRow, merged: true, warnings };
     }
   }
@@ -291,7 +310,7 @@ export function patchRun(db: Db, id: number, body: unknown, now = new Date()): W
   const warnings = resolveRefs(db, input);
   applyEnd(input.fields, input.end, now.toISOString());
   // Late token or summary updates on a finished run are fine; only status "running" reopens it.
-  updateRow(db, id, input.fields);
+  updateRow(db, existing, input.fields);
   return { run: getRunRow(db, id) as RunRow, merged: false, warnings };
 }
 
@@ -507,7 +526,7 @@ export function mergeDiscovered(
           patch.status = d.status;
           patch.ended_at = d.ended_at ?? at;
         }
-        updateRow(db, open.id, patch);
+        updateRow(db, open, patch);
         if (d.pid) res.ids.set(d.pid, open.id);
         res.updated++;
       } else if (!closing) {

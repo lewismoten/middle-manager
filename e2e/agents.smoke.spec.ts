@@ -88,6 +88,13 @@ test('agents: detail sheet, finished window and filters', async ({ page, baseURL
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();
 
+  await page.locator('#f-project').selectOption('main');
+  const matched = page.locator('table.runs tr.run');
+  await expect(matched).toHaveCount(2);
+  await expect(matched.first()).toContainText('Coordinate the login fix');
+  await expect(matched.last()).toContainText('Write the failing test');
+  await page.locator('#f-project').selectOption('');
+
   // Finished in the last hour brings back the finished review, nested and marked done.
   await page.locator('#f-hours').selectOption('1');
   const rows = page.locator('table.runs tr.run');
