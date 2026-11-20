@@ -27,10 +27,22 @@ export interface WeeklyPace {
 
 export const pct = (v: number, digits = 0) => `${v.toFixed(digits)}%`;
 
+export function paceDifference(
+  w: Pick<WeeklyPace, 'even_pace_pct' | 'projected_pct'>,
+): string | null {
+  const gap = w.even_pace_pct - w.projected_pct;
+  if (Math.abs(gap) < 1) return null;
+  const points = Math.round(Math.abs(gap));
+  return `${points} ${points === 1 ? 'pt' : 'pts'} ${gap > 0 ? 'behind' : 'ahead of'} even pace`;
+}
+
 export function burnForecast(
-  w: Pick<WeeklyPace, 'mode' | 'current' | 'unused_pct' | 'rate_pct_per_h' | 'need_pct_per_h'>,
+  w: Pick<
+    WeeklyPace,
+    'mode' | 'current' | 'unused_pct' | 'rate_pct_per_h' | 'rate_basis_h' | 'need_pct_per_h'
+  >,
 ): string | null {
   if (!w.current || w.mode !== 'burn') return null;
-  if (w.rate_pct_per_h === 0) return 'no use in the last 3 h';
+  if (w.rate_pct_per_h === 0) return `no use in the last ${w.rate_basis_h} h`;
   return `~${pct(w.unused_pct)} unused at this rate · need ${(w.need_pct_per_h / w.rate_pct_per_h).toFixed(1)}x pace`;
 }

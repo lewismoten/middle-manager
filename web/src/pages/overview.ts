@@ -9,6 +9,8 @@ import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
 import {
   burnForecastLine,
+  paceDifferenceLine,
+  recentRateLabel,
   getPace,
   modeBadge,
   pct,
@@ -58,6 +60,7 @@ function card(p: PlanPace, now: number): HTMLElement {
       projected: w.projected_pct,
       label,
     }),
+    paceDifferenceLine(w),
     burnForecastLine(w),
     h(
       'dl',
@@ -65,7 +68,7 @@ function card(p: PlanPace, now: number): HTMLElement {
       h('dt', {}, 'Even pace'),
       h('dd', {}, pct(w.even_pace_pct)),
       h('dt', {}, 'Projected'),
-      h('dd', {}, `${pct(w.projected_pct)} at reset`),
+      h('dd', {}, `${pct(w.projected_pct)} at reset · ${recentRateLabel(w)}`),
       h('dt', {}, 'Resets'),
       h('dd', {}, w.current ? until(w.reset_at, now) : 'passed, waiting for a new reading'),
       h('dt', {}, 'Suggested model'),

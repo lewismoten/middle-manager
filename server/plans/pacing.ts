@@ -1,7 +1,7 @@
 // Weekly burndown and pacing (SPEC 7). A line-for-line port of the reference Python
 // implementation (window selection, 24 h rate, projection, recent rate, mode), kept identical on
 // the same readings; test/pacing.test.ts checks it against values produced by the reference.
-// Only the target buffer is configurable (empty_buffer_hours; the reference hard-codes 1 h).
+// The product forecast in pace() uses the mode rate. analyse() retains the reference 24 h forecast.
 
 export const HOUR_MS = 3600_000;
 export const WEEK_MS = 7 * 24 * HOUR_MS;
@@ -60,6 +60,8 @@ export interface Analysis {
 }
 
 export interface Pace {
+  projected: number;
+  hit: number | null;
   mode: Mode;
   used_pct: number;
   rate: number;
@@ -175,7 +177,10 @@ export function pace(a: Analysis, now: number, emptyBufferHours = 1): Pace {
   else if (ratio > CONSERVE_ABOVE) mode = 'conserve';
   else if (ratio < BURN_BELOW) mode = 'burn';
   else mode = 'steady';
+  const forecast = a.used + rate * a.left_h;
   return {
+    projected: Math.min(100, forecast),
+    hit: rate > 0 && forecast >= 100 ? now + (Math.max(0, 100 - a.used) / rate) * HOUR_MS : null,
     mode,
     used_pct: a.used,
     rate,
