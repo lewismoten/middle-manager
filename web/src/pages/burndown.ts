@@ -350,7 +350,7 @@ function weekControls(v: WeekView): HTMLElement {
   prev.addEventListener('click', () => older && v.go(older, ['.week-prev', '.week-next']));
   next.addEventListener('click', () => newer && v.go(newer, ['.week-next', '.week-prev']));
 
-  const shownId = v.isCurrent ? (current?.id ?? 'current') : (v.shown?.id ?? '');
+  const shownId = v.shown?.id ?? (v.isCurrent ? 'current' : '');
   const choices = v.windows.filter((w) => w.id !== shownId);
   const olderCount = compareWindows(v.windows, shownId, 'last4').length;
   const compare = h(
@@ -429,9 +429,7 @@ async function buildOverlays(v: WeekView, dst: Span): Promise<OverlayBuild> {
     }
     return out;
   };
-  const shownId = v.isCurrent
-    ? (v.windows.find((w) => w.current)?.id ?? 'current')
-    : (v.shown?.id ?? '');
+  const shownId = v.shown?.id ?? (v.isCurrent ? 'current' : '');
   const picks = compareWindows(v.windows, shownId, v.state.compare);
   const avgFrom = v.state.avg ? averageWindows(v.windows, shownId) : [];
   const need = [...new Map([...picks, ...avgFrom].map((w) => [w.id, w])).values()];
@@ -974,7 +972,15 @@ export function burndownPage(timeZone?: string): HTMLElement {
         if (!shown) state.week = 'current';
       }
       const isCurrent = state.week === 'current';
-      if (isCurrent) shown = windows.find((w) => w.current) ?? null;
+      if (isCurrent) {
+        // After a reset with no new reading yet, the chart still shows the window that just
+        // ended; name it so "Compare with" does not lay that same week over itself.
+        const reset = plan.weekly ? Date.parse(plan.weekly.reset_at) : NaN;
+        shown =
+          windows.find((w) => w.current) ??
+          windows.find((w) => Math.abs(Date.parse(w.reset_at) - reset) < 3 * HOUR) ??
+          null;
+      }
       writeUrl();
       const order = ['current', ...windows.filter((w) => !w.current).map((w) => w.id)];
       const at = isCurrent ? 0 : order.indexOf(state.week);
