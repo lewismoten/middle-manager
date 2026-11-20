@@ -383,8 +383,14 @@ export function firstLine(text: string | null, max = 200): string | null {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+// Older collectors recorded the stderr redirect itself as the Codex prompt.
+function storedPrompt(prompt: string | null, source: string | null) {
+  return prompt === '2>' && source && !source.split('+').includes('api') ? null : prompt;
+}
+
 function shape(r: JoinedRow, now: Date, full: boolean) {
-  const { task_short_name, task_title, prompt, ...rest } = r;
+  const { task_short_name, task_title, prompt: rawPrompt, ...rest } = r;
+  const prompt = storedPrompt(rawPrompt, r.source);
   const end = r.ended_at ? Date.parse(r.ended_at) : now.getTime();
   return {
     ...rest,
@@ -517,7 +523,7 @@ export function mergeDiscovered(
         fill('unit', d.unit);
         fill('command', d.command);
         fill('model', d.model);
-        fill('prompt', d.prompt);
+        if (!storedPrompt(open.prompt, open.source) && d.prompt) patch.prompt = d.prompt;
         fill('harness', d.harness);
         fill('origin', d.origin);
         fill('branch', d.branch);

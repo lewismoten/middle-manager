@@ -233,6 +233,27 @@ describe('runs store', () => {
     ]);
   });
 
+  it('recovers a stale discovered redirect prompt on the next scan', () => {
+    const db = memoryDb();
+    const worker = {
+      pid: 41,
+      unit: 'worker-review.service',
+      command: 'codex exec',
+      agent_kind: 'codex' as const,
+      started_at: T0.toISOString(),
+    };
+    mergeDiscovered(db, 'm', 'systemd-workers', [{ ...worker, prompt: '2>' }], T0);
+    expect(listRuns(db, {})[0]?.prompt_first_line).toBeNull();
+    mergeDiscovered(
+      db,
+      'm',
+      'systemd-workers',
+      [{ ...worker, prompt: 'Review the release' }],
+      at(1),
+    );
+    expect(listRuns(db, {})[0]?.prompt_first_line).toBe('Review the release');
+  });
+
   it('treats a reused pid as a new process', () => {
     const db = memoryDb();
     mergeDiscovered(

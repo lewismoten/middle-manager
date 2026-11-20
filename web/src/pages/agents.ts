@@ -16,6 +16,7 @@ import {
   HOUR_CHOICES,
   ROLES,
   shortOrigin,
+  promptLabel,
   statusTone,
   type Filters,
   type RunDetail,
@@ -288,7 +289,7 @@ export function mountAgents(main: HTMLElement, ctx: Ctx): () => void {
             { 'data-label': 'Prompt', class: 'prompt' },
             r.prompt_first_line
               ? h('span', { title: r.prompt_first_line }, r.prompt_first_line)
-              : h('span', { class: 'muted' }, r.command ? r.command : '–'),
+              : h('span', { class: 'muted' }, promptLabel(r) ?? '–'),
           ),
           h('td', { 'data-label': 'Duration' }, durationEl(r, now)),
           h('td', { 'data-label': 'Where' }, whereCell(r)),
@@ -399,7 +400,7 @@ export function mountAgents(main: HTMLElement, ctx: Ctx): () => void {
         h('h3', {}, 'Prompt'),
         r.prompt
           ? h('pre', { class: 'prompt-full', tabindex: '0' }, r.prompt)
-          : h('p', { class: 'muted' }, 'No prompt reported.'),
+          : h('p', { class: 'muted' }, promptLabel(r) ?? 'No prompt reported.'),
         r.summary ? h('h3', {}, 'Summary') : null,
         r.summary ? h('pre', { class: 'prompt-full', tabindex: '0' }, r.summary) : null,
         r.children.length ? h('h3', {}, `Sub-agents (${r.children.length})`) : null,

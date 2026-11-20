@@ -7,6 +7,7 @@ import {
   argvDetails,
   cleanRemote,
   discoverProcesses,
+  expandShellScripts,
   inferKind,
   matchProcesses,
   parseMatchRules,
@@ -137,7 +138,37 @@ describe('process-scan', () => {
       model: 'opus',
       prompt: null,
     });
+    expect(argvDetails(['bash', '-c', 'codex exec -m my-model 2>&1']).prompt).toBeNull();
+    expect(argvDetails(['claude', '-p', '--model', 'opus', 'Expanded brief']).prompt).toBe(
+      'Expanded brief',
+    );
     expect(argvDetails(['codex', 'exec', '-'])).toEqual({ model: null, prompt: null });
+  });
+
+  it('reads both brief labels from the fleet commands for runs 21 and 23', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'worker-brief-'));
+    // Preserve the captured ExecStart escaping. Redirect only the brief lookup to the fixture.
+    const commands = [
+      String.raw`/bin/bash -c exec bash -c cd\ /home/ai/dev/GameMaker-patchwork-wt/q18-q21-keys-followups-1119\ \&\&\ npm\ ci\ \>\ /home/ai/GameMaker-SandboxEdition/.for-lewis/research/agents/codex-runs/q18-q21-keys-followups-1119-kaylee-npmci.log\ 2\>\&1\ \&\&\ /home/ai/.hermes/node/bin/codex\ exec\ -m\ gpt-6.2-astra\ -s\ workspace-write\ -c\ sandbox_workspace_write.network_access=true\ -C\ /home/ai/dev/GameMaker-patchwork-wt/q18-q21-keys-followups-1119\ \"\$\(cat\ /home/ai/GameMaker-SandboxEdition/.for-lewis/tools/codex-briefs/q18-q21-keys-followups-1119.txt\)\"  > /home/ai/GameMaker-SandboxEdition/.for-lewis/research/agents/codex-runs/q18-q21-keys-followups-1119-kaylee.log 2>&1 < /dev/null`,
+      String.raw`/bin/bash -c exec bash -c claude\ -p\ --model\ opus\ --permission-mode\ bypassPermissions\ \"\$\(cat\ /home/ai/GameMaker-SandboxEdition/.for-lewis/tools/codex-briefs/mm-product-reviewer.txt\)\"  > /home/ai/GameMaker-SandboxEdition/.for-lewis/research/agents/claude-runs/mm-product-reviewer-20261119-1830.log 2>&1 < /dev/null`,
+    ];
+    try {
+      for (const command of commands) {
+        expect(expandShellScripts(shellWords(command)).join(' ')).not.toContain('2>');
+        const name = path.basename(command.match(/codex-briefs\/([^\\]+)\\\)/)![1]!);
+        writeFileSync(path.join(cwd, name), `Review ${name}\nSecond line`);
+        const local = command.replace(
+          '/home/ai/GameMaker-SandboxEdition/.for-lewis/tools/codex-briefs/',
+          '',
+        );
+        expect(argvDetails(local, cwd).prompt).toBe(`Review ${name}`);
+      }
+      expect(
+        argvDetails(['bash', '-c', 'codex exec >>log 2>&1 </dev/null "Keep going"']).prompt,
+      ).toBe('Keep going');
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it('infers agent kind and strips credentials from remotes', () => {
@@ -465,9 +496,6 @@ describe('model from argv, then from the session log', () => {
       'h',
       '&&',
       'i',
-      '2>',
-      '&',
-      '1',
     ]);
     expect(shellWords(`x '' y`)).toEqual(['x', '', 'y']);
   });

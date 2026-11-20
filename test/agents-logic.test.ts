@@ -8,6 +8,7 @@ import {
   elapsed,
   filtersToQuery,
   shortOrigin,
+  promptLabel,
   type RunView,
 } from '../web/src/pages/agents-logic.ts';
 
@@ -53,6 +54,13 @@ function run(p: Partial<RunView>): RunView {
 }
 
 describe('agents page logic', () => {
+  it('uses the brief reference, worker unit, then worktree as the prompt fallback', () => {
+    const worker = run({ unit: 'worker-review.service', worktree: '/work/docs' });
+    expect(promptLabel({ ...worker, prompt_ref: 'Release checklist' })).toBe('Release checklist');
+    expect(promptLabel(worker)).toBe('review');
+    expect(promptLabel({ ...worker, unit: null })).toBe('docs');
+  });
+
   it('groups by machine in config order and nests children under parents', () => {
     const p = run({ id: 100, machine_id: 'b', started_at: '2026-11-19T10:00:00Z' });
     const c2 = run({
