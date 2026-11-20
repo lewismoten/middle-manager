@@ -138,3 +138,29 @@ test('board filters, card history, edits and sprint totals', async ({ page }) =>
   );
   await page.screenshot({ path: 'test-results/screenshots/board-velocity.png' });
 });
+
+test('API claim appears in Doing on desktop and mobile', async ({ page, request }) => {
+  const headers = { authorization: 'Bearer ' + E2E_TOKEN };
+  const title = 'Verify agent task claiming';
+  const created = await request.post('/api/v1/tasks', {
+    headers,
+    data: { title, status: 'todo', priority: 0 },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = await created.json();
+  expect((await request.post('/api/v1/tasks/' + id + '/claim', { headers })).status()).toBe(200);
+  for (const [width, scheme] of [
+    [1440, 'light'],
+    [375, 'dark'],
+  ] as const) {
+    await page.setViewportSize({ width, height: width === 375 ? 812 : 900 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/#/board');
+    if (width === 375) await page.getByLabel('Column', { exact: true }).selectOption('doing');
+    const card = page
+      .locator('.board-column[data-status="doing"] .board-card')
+      .filter({ hasText: title });
+    await expect(card).toBeInViewport();
+    await page.screenshot({ path: `test-results/mr6/board-${width}-${scheme}.png` });
+  }
+});

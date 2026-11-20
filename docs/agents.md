@@ -151,3 +151,10 @@ lowered by a smaller one read from a log.
 
 Adding another harness: write a `TokenReader` in `server/agents/tokens.ts` (how to find the
 session file, and how to fold one JSONL line into totals) and add it to `TOKEN_READERS`.
+
+Use `GET /api/v1/tasks/next` to find an eligible local todo card, optionally filtering by
+`project` and `assignee`. An empty queue returns 204. POST to `/api/v1/tasks/{id}/claim`
+with your write bearer token and, if running under a reported run, JSON `{"run_id":23}`.
+A 200 moves the card to Doing under your token name. A 409 means the card or run is
+unavailable. Task listings accept `limit` (default 200) and `offset` (default 0) and
+return `body_first_line` (up to 256 characters). Fetch task details for the full body.

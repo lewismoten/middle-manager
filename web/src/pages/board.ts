@@ -1,4 +1,4 @@
-import { api, type PublicConfig } from '../api.ts';
+import { api, listTasks, type PublicConfig } from '../api.ts';
 import { h } from '../dom.ts';
 import {
   cardAge,
@@ -462,7 +462,7 @@ export function board(canWrite: boolean, projects: PublicConfig['projects']) {
     if (!rows.length) panel.append(h('p', { class: 'muted' }, 'No matching cards'));
   }
   async function load() {
-    tasks = await api<Task[]>('/tasks');
+    tasks = await listTasks<Task>(true);
     for (const [control, values] of [
       [project, [...projects.map((p) => p.id), ...tasks.map(projectOf)]],
       [agent, tasks.map((t) => t.assignee)],

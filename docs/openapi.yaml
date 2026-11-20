@@ -123,6 +123,9 @@ components:
         project_id: { type: [string, 'null'] }
         origin: { type: string }
         external_ref: { type: [string, 'null'] }
+        claimed_by: { type: [string, 'null'] }
+        body_first_line:
+          { type: [string, 'null'], maxLength: 256, description: List responses only }
     TaskEvent:
       type: object
       properties:
@@ -179,6 +182,9 @@ paths:
     get:
       summary: List cards matching all supplied filters
       parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 0, default: 200 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: include_body, schema: { type: string, enum: ['1'] } }
         - { in: query, name: status, schema: { type: string } }
         - { in: query, name: project, schema: { type: string } }
         - { in: query, name: assignee, schema: { type: string } }
@@ -188,8 +194,9 @@ paths:
           schema: { type: string }
           description: Case-insensitive substring
       responses:
+        '400': { description: Unknown parameter or invalid pagination }
         '200':
-          description: Array of matching tasks in descending id order
+          description: Matching tasks in descending id order with body_first_line (256 characters maximum); body requires include_body=1
           content:
             application/json:
               { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } }
@@ -233,6 +240,34 @@ paths:
           description: Updated task
           content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } }
         '409': { description: Imported card }
+  /tasks/next:
+    get:
+      summary: Next eligible local todo card in board order
+      parameters:
+        - { in: query, name: project, schema: { type: string } }
+        - { in: query, name: assignee, schema: { type: string } }
+      responses:
+        '200': { description: Eligible task }
+        '204': { description: Empty queue }
+        '400': { description: Unknown parameter }
+  /tasks/{id}/claim:
+    parameters: *taskId
+    post:
+      summary: Claim a local todo card under the authenticated token name
+      security: *write
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                run_id: { type: integer }
+                assignee: { type: string, description: Must match the token name }
+      responses:
+        '200': { description: Claimed task }
+        '400': { description: Invalid input }
+        '404': { description: Unknown task }
+        '409': { description: Task or run unavailable }
   /tasks/{id}/events:
     parameters: *taskId
     post:
