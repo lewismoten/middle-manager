@@ -1,6 +1,7 @@
 import { api, type PublicConfig } from '../api.ts';
 import { h } from '../dom.ts';
 import {
+  cardAge,
   columns,
   countLabel,
   laneNames,
@@ -247,7 +248,11 @@ export function board(canWrite: boolean, projects: PublicConfig['projects']) {
     // The project line says which project or imported board a card is from; it is left out when
     // it would repeat the active filter, and the assignee is left out inside its own lane.
     const where = projectOf(t);
-    const meta = [where === project.value ? null : where, lanes.checked ? null : t.assignee]
+    const meta = [
+      where === project.value ? null : where,
+      lanes.checked || (t.external_ref && t.assignee === 'default') ? null : t.assignee,
+      cardAge(t),
+    ]
       .filter(Boolean)
       .join(' · ');
     b.append(h('small', {}, t.short_name ?? '#' + t.id), h('span', { class: 'title' }, t.title));

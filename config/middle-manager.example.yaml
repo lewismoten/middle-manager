@@ -49,6 +49,8 @@ documents: # markdown folders shown on the Notes page; private ones need a token
   - { id: journal, name: 'Journal', path: ~/notes/journal, glob: '*.md', private: true }
 
 collectors: # importers; each can be scheduled as a job
+  # Map Hermes board directory names to project ids.
+  # - { id: boards, kind: hermes-kanban, path: ~/.hermes/kanban/boards, map: { alpha-board: main } }
   # Agent collectors run on this host every every_s seconds (default 30); see docs/agents.md.
   - { id: processes, kind: process-scan, match: ['codex exec', 'claude -p'] }
   # Existing plan readings (time,source,machine,window,used_pct,resets_at,how); map CSV sources to plan ids.

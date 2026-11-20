@@ -17,6 +17,8 @@ export interface Task {
   sprint: string | null;
   priority: number | null;
   external_ref: string | null;
+  source_created_at?: string | null;
+  status_since?: string | null;
   updated_at?: string | null;
 }
 
@@ -42,6 +44,17 @@ export function projectOf(t: Pick<Task, 'project_id' | 'external_ref'>): string 
   return boardOf(t.external_ref) ?? null;
 }
 
+export function cardAge(
+  t: Pick<Task, 'source_created_at' | 'status_since' | 'status'>,
+  now = Date.now(),
+): string | null {
+  const elapsed = now - Date.parse(t.status_since ?? t.source_created_at ?? '');
+  if (!Number.isFinite(elapsed) || elapsed < 0) return null;
+  const duration =
+    elapsed < DAY ? Math.floor(elapsed / 3600000) + 'h' : Math.floor(elapsed / DAY) + 'd';
+  return (t.status_since ? t.status : 'age') + ' ' + duration;
+}
+
 export function matches(t: Task, f: Filters): boolean {
   if (f.project && projectOf(t) !== f.project) return false;
   if (f.assignee && t.assignee !== f.assignee) return false;
@@ -50,7 +63,8 @@ export function matches(t: Task, f: Filters): boolean {
   return [t.title, t.short_name, t.body, t.external_ref].some((s) => s?.toLowerCase().includes(q));
 }
 
-const time = (t: Task) => Date.parse(t.updated_at ?? '') || 0;
+const time = (t: Task) =>
+  Date.parse(t.status_since ?? t.source_created_at ?? t.updated_at ?? '') || 0;
 
 /**
  * Order inside a column. Done: newest first. Others: priority (lowest number first, unset last),
