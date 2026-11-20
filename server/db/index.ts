@@ -6,6 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import type { Config } from '../config.ts';
 
+import { backfillRunProjects } from '../agents/projects.ts';
+
 export type Db = DatabaseSync;
 
 export const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
@@ -98,6 +100,7 @@ export function syncConfig(db: Db, config: Config, now = new Date()): void {
     for (const x of config.projects) {
       p.run(x.id, x.name, x.repo ?? null, x.path ?? null, x.default_branch ?? null, at);
     }
+    backfillRunProjects(db);
     const pl = db.prepare(
       `INSERT INTO plans (id, name, provider, windows, empty_buffer_hours, in_config, updated_at)
        VALUES (?, ?, ?, ?, ?, 1, ?)

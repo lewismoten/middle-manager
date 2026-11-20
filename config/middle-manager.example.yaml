@@ -40,7 +40,7 @@ local_models: # OpenAI-compatible or Ollama endpoints (kind: ollama | openai)
 projects: # git repos agents work on
   - id: main
     name: 'Main project'
-    repo: 'owner/repo'
+    repo: 'https://github.com/owner/repo.git'
     path: ~/dev/project
     default_branch: develop
 

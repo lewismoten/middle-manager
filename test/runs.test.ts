@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createToken } from '../server/auth.ts';
 import {
@@ -12,7 +16,8 @@ import {
   startRun,
   applyTokenTotals,
 } from '../server/agents/runs.ts';
-import type { Db } from '../server/db/index.ts';
+import { normalizeRepo } from '../server/agents/projects.ts';
+import { syncConfig, type Db } from '../server/db/index.ts';
 import { startServer, type Running } from '../server/server.ts';
 import { memoryDb, testConfig } from './helpers.ts';
 
@@ -30,6 +35,59 @@ function addTask(db: Db, shortName: string): number {
 }
 
 describe('runs store', () => {
+  it.each([
+    'https://GitHub.com/org/name.git',
+    'https://github.com/org/name',
+    'git@GitHub.com:org/name.git',
+    'git@github.com:org/name',
+    'org/name',
+  ])('normalizes %s', (url) => {
+    expect(normalizeRepo(url)).toBe('github.com/org/name');
+  });
+
+  it('reads the origin of a worktree on write and during backfill', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'mm-runs-'));
+    const config = testConfig({ projects: [{ id: 'game', name: 'Game', repo: 'org/name' }] });
+    const db = memoryDb(config);
+    try {
+      execFileSync('git', ['init', '-q', cwd]);
+      execFileSync('git', ['-C', cwd, 'remote', 'add', 'origin', 'git@github.com:org/name.git']);
+      const { run } = startRun(db, { worktree: cwd });
+      expect(run.project_id).toBe('game');
+      db.prepare("UPDATE runs SET origin = NULL, project_id = 'default' WHERE id = ?").run(run.id);
+      syncConfig(db, config);
+      expect(getRun(db, run.id)).toMatchObject({
+        origin: 'git@github.com:org/name.git',
+        project_id: 'game',
+      });
+    } finally {
+      db.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('backfills discovered runs when the project configuration changes', () => {
+    const db = memoryDb();
+    const discovered = mergeDiscovered(db, 'server-1', 'process-scan', [
+      {
+        pid: 42,
+        command: 'codex',
+        agent_kind: 'codex',
+        started_at: null,
+        origin: 'git@github.com:org/name.git',
+      },
+    ]);
+    const id = discovered.ids.get(42)!;
+    expect(getRun(db, id).project_id).toBeNull();
+    const config = testConfig({ projects: [{ id: 'gamemaker', name: 'Game', repo: 'org/name' }] });
+    syncConfig(db, config);
+    syncConfig(db, config);
+    expect(getRun(db, id).project_id).toBe('gamemaker');
+    syncConfig(db, testConfig());
+    expect(getRun(db, id).project_id).toBeNull();
+    db.close();
+  });
+
   it('starts a run with defaults and resolves a task by short name', () => {
     const db = memoryDb();
     const taskId = addTask(db, 'fix-login');
@@ -296,7 +354,10 @@ describe('runs API', () => {
   let db: Db;
   let token: string;
   beforeAll(async () => {
-    const config = testConfig({ machines: [{ id: 'server-1', name: 'S1' }] });
+    const config = testConfig({
+      machines: [{ id: 'server-1', name: 'S1' }],
+      projects: [{ id: 'gamemaker', name: 'Game', repo: 'org/name' }],
+    });
     db = memoryDb(config);
     token = createToken(db, 'agent').token;
     running = await startServer({
@@ -377,6 +438,19 @@ describe('runs API', () => {
     const r = await call('POST', '/runs', { machine_id: 'server-1', pid: 999, model: 'm' });
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ merged: true, source: 'api+process-scan', model: 'm' });
+  });
+
+  it('filters runs by the project matched from their origin', async () => {
+    const matched = await call('POST', '/runs', { origin: 'git@github.com:org/name.git' });
+    const other = await call('POST', '/runs', { origin: 'https://example.org/org/name' });
+    expect(matched.body.project_id).toBe('gamemaker');
+    expect(other.body.project_id).toBeNull();
+    const list = await call('GET', '/runs?project=gamemaker');
+    expect(list.body.runs).toEqual([expect.objectContaining({ id: matched.body.id })]);
+    const changed = await call('PATCH', `/runs/${matched.body.id}`, {
+      origin: 'git@github.com:other/name',
+    });
+    expect(changed.body.project_id).toBeNull();
   });
 
   it('needs a token to write and reports errors as {error}', async () => {
