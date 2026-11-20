@@ -37,7 +37,18 @@ const equivalents: Record<string, string> = {
   triage: 'backlog',
   archived: 'done',
 };
-export function importBoards(db: Db, root: string) {
+function timestamp(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  const raw = String(value);
+  const numeric = /^-?\d+(?:\.\d+)?$/.test(raw);
+  const ms = numeric
+    ? Number(raw) * (Math.abs(Number(raw)) < 1e11 ? 1000 : 1)
+    : Date.parse(raw.replace(/^(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d(?:\.\d+)?)$/, '$1T$2Z'));
+  const date = new Date(ms);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+export function importBoards(db: Db, root: string, projects: Record<string, string> = {}) {
   let boards = 0,
     cards = 0;
   for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -62,6 +73,20 @@ export function importBoards(db: Db, root: string) {
       );
       if (!mapping.id || !mapping.title)
         throw new Error('Missing card identity or title in ' + entry.name);
+      const eventColumns = source
+        .prepare("SELECT name FROM pragma_table_info('task_events')")
+        .all();
+      const blockedAt = new Map<string, string | null>();
+      if (
+        ['task_id', 'kind', 'created_at'].every((key) => eventColumns.some((c) => c.name === key))
+      ) {
+        for (const event of source
+          .prepare(
+            "SELECT task_id, MAX(created_at) AS at FROM task_events WHERE kind='blocked' GROUP BY task_id",
+          )
+          .iterate())
+          blockedAt.set(String(event.task_id), timestamp(event.at));
+      }
       atomic(db, () => {
         for (const row of source.prepare('SELECT * FROM ' + table).iterate()) {
           const values: Values = {};
@@ -74,7 +99,23 @@ export function importBoards(db: Db, root: string) {
             .toLowerCase()
             .replace(/[ -]/g, '_');
           values.status = statuses.includes(raw) ? raw : (equivalents[raw] ?? raw);
+          const project = String(values.project_id ?? '').trim();
+          values.project_id = Object.hasOwn(projects, entry.name)
+            ? projects[entry.name]!
+            : project && project !== 'default'
+              ? project
+              : entry.name;
           validate(values, true);
+          values.source_created_at = timestamp(row.created_at);
+          const statusTime =
+            values.status === 'blocked'
+              ? blockedAt.get(String(row[mapping.id!]))
+              : values.status === 'done'
+                ? timestamp(row.completed_at)
+                : values.status === 'doing'
+                  ? timestamp(row.started_at)
+                  : null;
+          values.status_since = timestamp(row.status_since) ?? statusTime ?? null;
           const identity = row[mapping.id!];
           if (identity == null || identity === '') throw new Error('Missing card id');
           const ref = 'hermes-kanban:' + entry.name + ':' + identity;
@@ -86,9 +127,13 @@ export function importBoards(db: Db, root: string) {
             existing ? Number(existing.id) : undefined,
             ref,
           );
-          if (columns.some((c) => ['branch', 'pr', 'pr_url', 'pull_request_url'].includes(c))) {
+          if (
+            columns.some((c) =>
+              ['branch', 'branch_name', 'pr', 'pr_url', 'pull_request_url'].includes(c),
+            )
+          ) {
             const links = JSON.stringify({
-              branch: row.branch ?? null,
+              branch: row.branch ?? row.branch_name ?? null,
               pr: row.pr_url ?? row.pull_request_url ?? row.pr ?? null,
             });
             const last = db
@@ -98,7 +143,12 @@ export function importBoards(db: Db, root: string) {
               .get(task.id!);
             if (
               last?.data_json !== links &&
-              (last || row.branch || row.pr_url || row.pull_request_url || row.pr)
+              (last ||
+                row.branch ||
+                row.branch_name ||
+                row.pr_url ||
+                row.pull_request_url ||
+                row.pr)
             ) {
               db.prepare(
                 "INSERT INTO task_events(task_id,at,actor,kind,data_json) VALUES(?,?,'hermes-kanban','link',?)",
@@ -121,5 +171,12 @@ export function runCollector(db: Db, config: Config, id: string) {
     throw new HttpError(404, 'not_found', 'Board collector not found');
   if (typeof col.path !== 'string' || !col.path)
     throw new HttpError(400, 'collector_config', 'Board collector needs a path');
-  return importBoards(db, expandHome(col.path));
+  const map = col.map ?? {};
+  if (
+    typeof map !== 'object' ||
+    Array.isArray(map) ||
+    Object.values(map).some((v) => typeof v !== 'string' || !v.trim())
+  )
+    throw new HttpError(400, 'collector_config', 'Board map must map board names to project ids');
+  return importBoards(db, expandHome(col.path), map as Record<string, string>);
 }

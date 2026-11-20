@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { cardAge, projectOf } from '../web/src/pages/board-logic.ts';
 import { importBoards } from '../server/board/import.ts';
 test('imports multiple board schemas including WAL, preserves notes and stable identities', () => {
   const root = mkdtempSync(join(tmpdir(), 'kanban-'));
@@ -21,21 +22,31 @@ test('imports multiple board schemas including WAL, preserves notes and stable i
       source.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');
       source.exec(
         board === 'alpha'
-          ? "CREATE TABLE cards(card_id,title,state); INSERT INTO cards VALUES(1,'First','in_progress')"
+          ? "CREATE TABLE cards(card_id,title,state,created_at); INSERT INTO cards VALUES(1,'First','in_progress',1700000000)"
           : "CREATE TABLE tasks(id,name,status);INSERT INTO tasks VALUES(1,'Second','todo')",
       );
     }
-    expect(importBoards(db, root)).toEqual({ boards: 2, cards: 2 });
+    expect(importBoards(db, root, { alpha: 'main' })).toEqual({ boards: 2, cards: 2 });
     const read = () => db.prepare('SELECT * FROM tasks ORDER BY external_ref').all();
     const before = read();
     expect(before[0]).toMatchObject({ external_ref: 'hermes-kanban:alpha:1', status: 'doing' });
+    const fixture = {
+      status: 'doing',
+      source_created_at: '2023-11-14T22:13:20.000Z',
+      status_since: null,
+      project_id: 'main',
+      external_ref: 'hermes-kanban:alpha:1',
+    };
+    expect(before[0]).toMatchObject(fixture);
+    expect(projectOf(fixture)).toBe('main');
+    expect(cardAge(fixture, 1700000000000 + 7 * 3600000)).toBe('age 7h');
     db.prepare(
       "INSERT INTO task_events(task_id,at,kind,data_json) VALUES(?,datetime('now'),'comment','{}')",
     ).run(before[0]!.id!);
-    importBoards(db, root);
+    importBoards(db, root, { alpha: 'main' });
     expect(read()).toEqual(before);
     sources[0]!.exec("UPDATE cards SET state='done'");
-    importBoards(db, root);
+    importBoards(db, root, { alpha: 'main' });
     expect(read()[0]).toMatchObject({ id: before[0]!.id, status: 'done' });
     expect(
       db
