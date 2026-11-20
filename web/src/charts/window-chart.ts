@@ -1,8 +1,10 @@
 // A plan window chart: used % over the window with the even-pace line, the projection at the
-// recent rate, the target-empty marker and a "now" line. Inline SVG, redrawn on resize, with a
-// hover crosshair that reads out the nearest reading.
+// recent rate, the 1 h / 2 h projections, the target-empty marker and a "now" line. Inline SVG,
+// redrawn on resize, with a hover crosshair that reads out the nearest reading and where each
+// projection ends.
 
 import { h } from '../dom.ts';
+import { projectionSegment } from './projection-geometry.ts';
 import { linear, points, responsive, s, fix } from './svg.ts';
 
 const HOUR = 3600_000;
@@ -20,13 +22,36 @@ export interface WindowChartSpec {
   now: number;
   points: ChartPoint[];
   /** Weekly projection at reset, or when the allowance runs out. */
-  projection?: ChartPoint & { runsOut: boolean };
+  projection?: ChartPoint & { runsOut: boolean; readout?: string };
+  /**
+   * Extra projections (the 1 h and 2 h rates), each told apart by dash pattern, end marker and
+   * an inline tag. Elements carry data-proj=<key> so a page can hide one with CSS.
+   */
+  shortProjections?: ShortLine[];
   /** When the plan should reach 100% (reset minus the buffer). */
   targetEmpty?: number;
   ticks: 'day' | 'hour';
   timeZone?: string;
   height?: number;
 }
+
+export interface ShortLine {
+  key: string;
+  /** Short tag drawn at the end of the line ("1 h"). */
+  tag: string;
+  /** End point: used % at the reset, or 100 at the time it runs out. */
+  t: number;
+  used: number;
+  runsOut: boolean;
+  /** Hover text, e.g. "Last 1 h: 97% at reset". */
+  readout: string;
+}
+
+/** End marker shapes for the short projections, in order: square, then triangle. */
+const SHAPES = [
+  (x: number, y: number) => `M${x - 4},${y - 4} h8 v8 h-8 Z`,
+  (x: number, y: number) => `M${x},${y - 5} L${x + 5},${y + 4} L${x - 5},${y + 4} Z`,
+];
 
 function hourIn(t: number, tz?: string): number {
   const hh = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: tz })
@@ -146,20 +171,57 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
     const pts = spec.points;
     const last = pts[pts.length - 1];
     const p = spec.projection;
-    if (last && p) {
+    const seg = last && p ? projectionSegment(spec, last.used, p) : null;
+    if (seg) {
       svg.append(
         s('line', {
           class: 'proj',
-          x1: fix(x(Math.min(spec.now, spec.end))),
-          y1: fix(y(last.used)),
-          x2: fix(x(p.t)),
-          y2: fix(y(p.used)),
+          x1: fix(x(seg.t0)),
+          y1: fix(y(seg.used0)),
+          x2: fix(x(seg.t1)),
+          y2: fix(y(seg.used1)),
         }),
       );
-      if (p.runsOut) {
-        svg.append(s('circle', { class: 'runs-out', cx: fix(x(p.t)), cy: fix(y(100)), r: 4 }));
+      if (seg.runsOut) {
+        svg.append(s('circle', { class: 'runs-out', cx: fix(x(seg.t1)), cy: fix(y(100)), r: 4 }));
       }
     }
+
+    const shorts = last ? (spec.shortProjections ?? []) : [];
+    const segs = shorts.map((sp) => projectionSegment(spec, (last as ChartPoint).used, sp));
+    // The higher end gets its tag above, the lower below, so close ends stay legible.
+    const highest = Math.max(...segs.map((g) => (g ? g.used1 : -1)));
+    shorts.forEach((sp, i) => {
+      const g = segs[i];
+      if (!g) return;
+      const x1 = fix(x(g.t0));
+      const y1 = fix(y(g.used0));
+      const x2 = fix(x(g.t1));
+      const y2 = fix(y(g.used1));
+      const group = s('g', { class: `proj-short proj-${sp.key}`, 'data-proj': sp.key });
+      group.append(s('line', { class: 'proj-line', x1, y1, x2, y2 }));
+      const shape = SHAPES[i % SHAPES.length] as (typeof SHAPES)[0];
+      group.append(
+        g.runsOut
+          ? s('circle', { class: 'runs-out', cx: x2, cy: y2, r: 4 })
+          : s('path', { class: 'end-mark', d: shape(x2, y2) }),
+      );
+      const above = g.used1 === highest && segs.findIndex((o) => o?.used1 === highest) === i;
+      const right = x2 > width - m.r - 40;
+      group.append(
+        s(
+          'text',
+          {
+            class: 'proj-tag',
+            x: right ? x2 - 8 : x2 + 8,
+            y: above ? y2 - 7 : y2 + 15,
+            'text-anchor': right ? 'end' : 'start',
+          },
+          g.runsOut ? `${sp.tag} out` : sp.tag,
+        ),
+      );
+      svg.append(group);
+    });
 
     if (pts.length) {
       const line: [number, number][] = [
@@ -207,12 +269,18 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
       cross.setAttribute('visibility', 'visible');
       focus.setAttribute('visibility', 'visible');
       tip.replaceChildren(
-        h('b', {}, `${best.used.toFixed(1)}% used`),
-        ` · ${tf.format(new Date(best.t))}`,
-        best.note ? h('span', { class: 'muted' }, ` · ${best.note}`) : '',
+        h(
+          'div',
+          {},
+          h('b', {}, `${best.used.toFixed(1)}% used`),
+          ` · ${tf.format(new Date(best.t))}`,
+          best.note ? h('span', { class: 'muted' }, ` · ${best.note}`) : '',
+        ),
+        p?.readout ? h('div', { class: 'tip-proj' }, p.readout) : '',
+        ...shorts.map((sp) => h('div', { class: 'tip-proj', 'data-proj': sp.key }, sp.readout)),
       );
       tip.hidden = false;
-      const left = Math.min(Math.max(bx - 80, 0), width - 170);
+      const left = Math.min(Math.max(bx - 80, 0), Math.max(0, width - tip.offsetWidth));
       tip.style.left = `${left}px`;
       tip.style.top = `${Math.max(0, by - 44)}px`;
     });
@@ -228,12 +296,33 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
   return wrap;
 }
 
-export function chartLegend(items: { cls: string; label: string }[]): HTMLElement {
+export interface LegendItem {
+  cls: string;
+  label: string;
+  /** Makes the entry a toggle button (aria-pressed) that shows or hides a series. */
+  toggle?: { pressed: boolean; onToggle: (pressed: boolean) => void };
+}
+
+export function chartLegend(items: LegendItem[]): HTMLElement {
   return h(
     'ul',
     { class: 'legend' },
-    ...items.map((i) =>
-      h('li', {}, h('span', { class: `key key-${i.cls}`, 'aria-hidden': 'true' }), i.label),
-    ),
+    ...items.map((i) => {
+      const key = h('span', { class: `key key-${i.cls}`, 'aria-hidden': 'true' });
+      if (!i.toggle) return h('li', {}, key, i.label);
+      const t = i.toggle;
+      const b = h(
+        'button',
+        { type: 'button', class: 'legend-toggle', 'aria-pressed': String(t.pressed) },
+        key,
+        i.label,
+      );
+      b.addEventListener('click', () => {
+        const next = b.getAttribute('aria-pressed') !== 'true';
+        b.setAttribute('aria-pressed', String(next));
+        t.onToggle(next);
+      });
+      return h('li', {}, b);
+    }),
   );
 }

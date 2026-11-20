@@ -136,7 +136,10 @@ Agents should be able to self-report with one curl each at start and end; docume
 For each plan's weekly window: used %, even-pace %, recent rate (last 3 h of readings, else 24 h),
 needed rate to reach 100% at `reset - empty_buffer_hours`, projection at reset, and a mode:
 `burn` (recent < 0.75 x needed), `steady`, `conserve` (> 1.25 x needed), `stop` (>= 97% used). The mode
-maps to a suggested model rung from `models` (burn = top rung, conserve = bottom). Port the existing
+maps to a suggested model rung from `models` (burn = top rung, conserve = bottom). Alongside, the
+1 h and 2 h rates (from the reading at or just before now minus 1 h / 2 h to the newest reading;
+null with a reason unless the readings cover 30 min of that window) are projected to the reset
+and reported on the API, charts and cards. They do not change the mode. Port the existing
 reference implementation `tools/kaylee-usage/burndown.py` + `plan_reads.py` (see section 11) and keep its
 results identical on the same input (unit test with a fixture CSV).
 

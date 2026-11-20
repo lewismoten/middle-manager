@@ -29,7 +29,8 @@ Screenshots use the synthetic data from the end-to-end tests (`npm run screensho
 ### Overview
 
 One screen for "is anything wrong?": a gauge per plan with how much of the week is used, where an
-even pace would be, the projection at the reset, the pacing mode and the reset countdown. Stale
+even pace would be, the projection at the reset, the pacing mode and the reset countdown, plus
+where the last 1 h and 2 h burn rates lead. Stale
 readings are marked as stale. The other Overview items (board counts, agents now, failed jobs) are
 still planned.
 
@@ -38,7 +39,7 @@ still planned.
 ### Burndown
 
 Per plan: the weekly window chart (readings, even-pace line, projection, target-empty marker and
-"now"), the 5-hour window when the plan reports one, how much was left unused at each past reset,
+"now", plus projections at the last 1 h and 2 h burn rate that you can toggle from the legend), the 5-hour window when the plan reports one, how much was left unused at each past reset,
 and a pacing table with the mode (burn, steady, conserve, stop) and the suggested model rung.
 
 ![Burndown: weekly chart, 5-hour window and pacing table](docs/images/burndown.png)

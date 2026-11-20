@@ -18,6 +18,9 @@ import {
   rate,
   readingAge,
   refreshWhileShown,
+  shortOutcome,
+  shortProjections,
+  shortProjectionsLine,
   until,
   type PaceResponse,
   type PlanPace,
@@ -27,6 +30,25 @@ import {
 import './plans.css';
 
 const PLAN_KEY = 'mm.burndown.plan';
+const SHORT_KEY = 'mm.burndown.shortProjections';
+
+/** Which 1 h / 2 h projection lines are shown; both by default. */
+function savedShort(): Record<string, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(SHORT_KEY) ?? '{}') as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveShort(key: string, shown: boolean): void {
+  try {
+    localStorage.setItem(SHORT_KEY, JSON.stringify({ ...savedShort(), [key]: shown }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 const HOUR = 3600_000;
 
 function savedPlan(): string | null {
@@ -277,6 +299,12 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
       (x) => x.resets_at && Math.abs(new Date(x.resets_at).getTime() - end) < 3 * HOUR,
     ),
   );
+  const shorts = shortProjections(w);
+  const shown = savedShort();
+  for (const sp of shorts) {
+    const key = `${sp.window_h}h`;
+    if (shown[key] === false) box.classList.add(`hide-proj-${key}`);
+  }
   box.append(
     h(
       'p',
@@ -296,11 +324,26 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
       ),
       paceDifferenceLine(w),
       burnForecastLine(w),
+      shortProjectionsLine(w, tz),
     ),
     chartLegend([
       { cls: 'used', label: 'Readings' },
       { cls: 'even', label: 'Even pace' },
       { cls: 'proj', label: `Projection (last ${w.rate_basis_h} h)` },
+      ...shorts.map((sp) => {
+        const key = `${sp.window_h}h`;
+        return {
+          cls: `proj-${key}`,
+          label: `Last ${sp.window_h} h rate`,
+          toggle: {
+            pressed: shown[key] !== false,
+            onToggle: (on: boolean) => {
+              box.classList.toggle(`hide-proj-${key}`, !on);
+              saveShort(key, on);
+            },
+          },
+        };
+      }),
       { cls: 'target', label: `Target empty (${p.empty_buffer_hours} h before reset)` },
       { cls: 'now', label: 'Now' },
     ]),
@@ -314,7 +357,18 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
         t: w.runs_out_at ? Date.parse(w.runs_out_at) : end,
         used: w.projected_pct,
         runsOut: w.runs_out_at !== null,
+        readout: `Projection (last ${w.rate_basis_h} h): ${w.runs_out_at ? `runs out ${fmtTime(w.runs_out_at, tz)}` : `${pct(w.projected_pct)} at reset`}`,
       },
+      shortProjections: shorts
+        .filter((sp) => sp.projected_pct !== null)
+        .map((sp) => ({
+          key: `${sp.window_h}h`,
+          tag: `${sp.window_h} h`,
+          t: sp.runs_out_at ? Date.parse(sp.runs_out_at) : end,
+          used: sp.runs_out_at ? 100 : (sp.projected_pct as number),
+          runsOut: sp.runs_out_at !== null,
+          readout: `Last ${sp.window_h} h: ${shortOutcome(sp, (iso) => fmtTime(iso, tz))}`,
+        })),
       targetEmpty: new Date(w.target_empty_at).getTime(),
       ticks: 'day',
       timeZone: tz,

@@ -1,16 +1,22 @@
 /* Plans: Overview gauges and the Burndown page (S2). Uses the shared color tokens. */
 :root {
   --proj: #b45309;
+  --proj-1h: #a21caf;
+  --proj-2h: #0d9488;
   --target: #18202e;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --proj: #f5a524;
+    --proj-1h: #d946ef;
+    --proj-2h: #0fa192;
     --target: #e8ecf4;
   }
 }
 :root[data-theme='dark'] {
   --proj: #f5a524;
+  --proj-1h: #d946ef;
+  --proj-2h: #0fa192;
   --target: #e8ecf4;
 }
 
@@ -215,6 +221,41 @@ svg.gauge {
 .key-proj {
   border-top: 2px dashed var(--proj);
 }
+.key-proj-2h {
+  border-top: 2px dashed var(--proj-2h);
+  border-image: repeating-linear-gradient(90deg, var(--proj-2h) 0 7px, transparent 7px 10px) 1;
+}
+.key-proj-1h {
+  border-top: 2px solid var(--proj-1h);
+  border-image: repeating-linear-gradient(
+      90deg,
+      var(--proj-1h) 0 5px,
+      transparent 5px 7px,
+      var(--proj-1h) 7px 8px,
+      transparent 8px 10px
+    )
+    1;
+}
+.legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.legend-toggle[aria-pressed='false'] {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+.short-projections {
+  display: block;
+}
 .key-target {
   width: 9px;
   height: 9px;
@@ -283,6 +324,46 @@ figure.chart {
   fill: var(--panel);
   stroke: var(--proj);
   stroke-width: 2;
+}
+.chart .proj-line {
+  stroke-width: 2;
+  stroke-linecap: butt;
+}
+.chart .proj-2h {
+  --c: var(--proj-2h);
+}
+.chart .proj-1h {
+  --c: var(--proj-1h);
+}
+.chart .proj-2h .proj-line {
+  stroke: var(--c);
+  stroke-dasharray: 7 3;
+}
+.chart .proj-1h .proj-line {
+  stroke: var(--c);
+  stroke-dasharray: 5 2 1 2;
+}
+.chart .proj-short .end-mark {
+  fill: var(--c);
+  stroke: var(--panel);
+  stroke-width: 1.5;
+}
+.chart .proj-short .runs-out {
+  stroke: var(--c);
+}
+.chart .proj-tag {
+  fill: var(--ink);
+  font: 11px var(--mono);
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
+}
+.weekly.hide-proj-1h [data-proj='1h'],
+.weekly.hide-proj-2h [data-proj='2h'] {
+  display: none;
+}
+.chart-tip .tip-proj {
+  color: var(--muted);
 }
 .chart .target {
   fill: var(--target);

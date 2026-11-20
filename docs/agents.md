@@ -111,6 +111,19 @@ Filters: `active`, `finished` (1 or true for closed runs, 0 or false for open ru
 Unknown query keys and invalid filter values return 400. Task listings accept board statuses
 (backlog, todo, doing, review, blocked, done). Role and kind belong to agent runs.
 Use `/plans/pace?plan=ID&model=MODEL` to select plans by configured ID and model.
+
+Each plan's `weekly` object also has `projection_1h` and `projection_2h`: the burn rate over the
+last 1 or 2 hours and where it leads (`projected_pct` at the reset, or `runs_out_at` if sooner).
+They react faster than `rate_pct_per_h` when the burn changes, but the pacing mode and the
+suggested model still use `rate_pct_per_h`. When there are not enough readings (they must cover
+30 minutes of the window), the numbers are null and `reason` is `short_span`,
+`no_recent_readings` or `window_ended`, with `reason_text` explaining it:
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/pace?plan=claude" | jq '.plans[0].weekly.projection_2h'
+# { "window_h": 2, "rate_pct_per_h": 1.42, "projected_pct": 97.3, "runs_out_at": null, ... }
+```
+
 External jobs accept `kind` (hermes-cron or systemd-timers) and `status` (running, ok, failed, error).
 
 ## Collectors

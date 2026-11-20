@@ -194,6 +194,103 @@ export function pace(a: Analysis, now: number, emptyBufferHours = 1): Pace {
   };
 }
 
+// ---- Short-window rates (1 h and 2 h) ----
+// Reported next to the mode rate so a change in burn shows up quickly. They never feed the mode.
+
+export const SHORT_WINDOWS_H = [1, 2] as const;
+export type ShortWindowH = (typeof SHORT_WINDOWS_H)[number];
+/** The readings must cover at least this much of the short window. */
+export const SHORT_MIN_SPAN_H = 0.5;
+
+export type ShortReason = 'window_ended' | 'no_recent_readings' | 'short_span';
+
+export interface ShortProjection {
+  window_h: ShortWindowH;
+  /** % per hour between the two readings used, never negative; null when not enough data. */
+  rate: number | null;
+  /** The older reading the rate starts from (the window start at 0% after a reset). */
+  since: number | null;
+  /** The newer reading the rate ends at. */
+  until: number | null;
+  /** Hours of the short window the readings cover. */
+  covered_h: number;
+  /** Used + rate x hours left, capped at 100. */
+  projected: number | null;
+  /** When the plan reaches 100% at this rate, if before the reset (or when it already did). */
+  hit: number | null;
+  reason: ShortReason | null;
+  /** Plain-language reason when null, else null. */
+  reason_text: string | null;
+}
+
+const minutes = (h: number) => `${Math.round(h * 60)} min`;
+
+/**
+ * Rate over the last `hours` hours: from the reading at or just before now - hours (the window
+ * start at 0% if the week began inside the short window) to the newest reading. A reading more
+ * than `hours` before the short window is too old to stand for it (a gap in readings); then the
+ * first reading inside the window is used instead. The readings must cover at least 30 min of
+ * the short window, else the rate is null with a reason. Projects to the reset from `now`, the
+ * same way pace() does.
+ */
+export function shortProjection(a: Analysis, now: number, hours: ShortWindowH): ShortProjection {
+  const out: ShortProjection = {
+    window_h: hours,
+    rate: null,
+    since: null,
+    until: null,
+    covered_h: 0,
+    projected: null,
+    hit: null,
+    reason: null,
+    reason_text: null,
+  };
+  const fail = (reason: ShortReason, text: string) => ({ ...out, reason, reason_text: text });
+  if (a.end <= now)
+    return fail('window_ended', 'the weekly window has reset; waiting for a new reading');
+  const from = now - hours * HOUR_MS;
+  // Readings up to now, plus the window start at 0% when no reading predates it.
+  const pts: { t: number; used: number }[] = a.points.filter((p) => p.t <= now);
+  if (!pts.some((p) => p.t <= a.start)) pts.unshift({ t: a.start, used: 0 });
+  const last = pts[pts.length - 1];
+  if (!last || last.t <= from) {
+    return fail('no_recent_readings', `no reading in the last ${hours} h`);
+  }
+  let anchor = pts.filter((p) => p.t <= from).pop();
+  let gap = false;
+  if (anchor && anchor.t < from - hours * HOUR_MS) {
+    anchor = undefined;
+    gap = true;
+  }
+  anchor ??= pts.find((p) => p.t > from);
+  const covered = anchor ? (last.t - Math.max(anchor.t, from)) / HOUR_MS : 0;
+  out.covered_h = Math.max(0, covered);
+  if (!anchor || anchor === last || covered < SHORT_MIN_SPAN_H) {
+    return fail(
+      'short_span',
+      `readings cover ${minutes(out.covered_h)} of the last ${hours} h (need ${minutes(SHORT_MIN_SPAN_H)})` +
+        (gap ? '; gap in readings before that' : ''),
+    );
+  }
+  const rate = Math.max(0, (last.used - anchor.used) / ((last.t - anchor.t) / HOUR_MS));
+  const leftH = Math.max(0, (a.end - now) / HOUR_MS);
+  const forecast = a.used + rate * leftH;
+  let hit: number | null = null;
+  if (a.used >= 100) {
+    hit = (a.points.find((p) => p.used >= 100) as Point).t;
+  } else if (rate > 0 && forecast >= 100) {
+    hit = now + ((100 - a.used) / rate) * HOUR_MS;
+  }
+  return {
+    ...out,
+    rate,
+    since: anchor.t,
+    until: last.t,
+    projected: Math.min(100, forecast),
+    hit,
+  };
+}
+
 /**
  * The model rung a mode suggests from a plan's ladder (cheapest first): burn = top rung,
  * conserve = bottom, steady = the middle (lower middle for an even count), stop = none.

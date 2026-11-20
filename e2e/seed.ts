@@ -1,5 +1,7 @@
 // Synthetic plan readings for the e2e server, relative to now: plan-a has a live week with
-// hourly-ish readings, two finished weeks and a 5-hour window; plan-b has a stale reading.
+// readings every 2 h, then every 20 min for the last couple of hours as the burn picks up (so the
+// 1 h and 2 h projections differ from the longer one), two finished weeks and a 5-hour window;
+// plan-b has a stale reading.
 
 import type { Db } from '../server/db/index.ts';
 import { insertReadings, type NewReading } from '../server/plans/store.ts';
@@ -13,9 +15,10 @@ export function seedPlanReadings(db: Db, now = Date.now()): void {
   for (let week = 2; week >= 0; week--) {
     const end = reset - week * 7 * 24 * HOUR;
     const start = end - 7 * 24 * HOUR;
-    const stop = week === 0 ? now - 0.5 * HOUR : end - HOUR;
+    const stop = week === 0 ? now - 2.5 * HOUR : end - HOUR;
     let used = 0;
-    for (let t = start + 2 * HOUR, i = 0; t < stop; t += 2 * HOUR, i++) {
+    let t = start + 2 * HOUR;
+    for (let i = 0; t < stop; t += 2 * HOUR, i++) {
       used = Math.min(100, used + 0.35 + ((i * 7) % 5) * 0.12 + (week === 1 ? 0.15 : 0));
       rows.push({
         plan_id: 'plan-a',
@@ -26,6 +29,25 @@ export function seedPlanReadings(db: Db, now = Date.now()): void {
         machine_id: i % 3 ? 'server-1' : 'laptop-1',
         how: 'seed',
       });
+    }
+    if (week === 0) {
+      // Speeding up: readings every 20 minutes after the last 2-hour one (2.5 h+ ago).
+      for (
+        let at = t - 2 * HOUR + 20 * 60_000, k = 1;
+        at < now - 5 * 60_000;
+        at += 20 * 60_000, k++
+      ) {
+        used = Math.min(100, used + 0.12 + k * 0.02);
+        rows.push({
+          plan_id: 'plan-a',
+          window: 'weekly',
+          used_pct: Math.round(used * 10) / 10,
+          resets_at: iso(end),
+          read_at: iso(at),
+          machine_id: 'server-1',
+          how: 'seed',
+        });
+      }
     }
   }
   const fiveReset = now + 2 * HOUR;

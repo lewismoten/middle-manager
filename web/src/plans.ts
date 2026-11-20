@@ -2,9 +2,23 @@
 
 import { api } from './api.ts';
 import { h } from './dom.ts';
-import { burnForecast, paceDifference, type Mode, type WeeklyPace } from './plans-logic.ts';
+import {
+  burnForecast,
+  paceDifference,
+  shortOutcome,
+  shortProjections,
+  type Mode,
+  type WeeklyPace,
+} from './plans-logic.ts';
 
-export { pct, type Mode, type WeeklyPace } from './plans-logic.ts';
+export {
+  pct,
+  shortOutcome,
+  shortProjections,
+  type Mode,
+  type ShortProjection,
+  type WeeklyPace,
+} from './plans-logic.ts';
 
 export interface Reading {
   id: number;
@@ -81,6 +95,33 @@ export function paceDifferenceLine(w: WeeklyPace): HTMLElement | null {
 export function burnForecastLine(w: WeeklyPace): HTMLElement | null {
   const text = burnForecast(w);
   return text === null ? null : h('span', { class: 'burn-forecast small' }, text);
+}
+
+/**
+ * "Last 2 h: 97% at reset · Last 1 h: runs out Fri 5:10 PM" in the given time zone. Each part's
+ * tooltip gives the rate, or why there is none.
+ */
+export function shortProjectionsLine(w: WeeklyPace, tz?: string): HTMLElement | null {
+  const list = shortProjections(w);
+  if (!list.length) return null;
+  const parts: (HTMLElement | string)[] = [];
+  list.forEach((p, i) => {
+    if (i) parts.push(' · ');
+    parts.push(
+      h(
+        'span',
+        {
+          'data-proj': `${p.window_h}h`,
+          title:
+            p.rate_pct_per_h === null
+              ? (p.reason_text ?? 'not enough readings')
+              : `${rate(p.rate_pct_per_h)} over the last ${p.window_h} h`,
+        },
+        `Last ${p.window_h} h: ${shortOutcome(p, (iso) => fmtTime(iso, tz))}`,
+      ),
+    );
+  });
+  return h('span', { class: 'short-projections small' }, ...parts);
 }
 
 /** "2d 4h", "3h 20m", "12m"; negative spans read "now". */

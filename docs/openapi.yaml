@@ -10,6 +10,40 @@ servers: [{ url: /api/v1 }]
 components:
   securitySchemes: { token: { type: http, scheme: bearer } }
   schemas:
+    ShortProjection:
+      type: object
+      description: >-
+        Projection at the rate over the last 1 or 2 hours of readings. Reported only; the pacing
+        mode keeps using rate_pct_per_h. The rate runs from the reading at or just before
+        now minus the window (the week start at 0% after a reset) to the newest reading, and the
+        readings must cover at least 30 minutes of the window. Otherwise the numbers are null and
+        reason says why.
+      properties:
+        window_h: { type: integer, enum: [1, 2] }
+        rate_pct_per_h: { type: [number, 'null'], minimum: 0 }
+        since: { type: [string, 'null'], description: Older reading the rate starts from }
+        until: { type: [string, 'null'], description: Newest reading the rate ends at }
+        covered_h: { type: number, description: Hours of the window the readings cover }
+        projected_pct: { type: [number, 'null'], description: Used % at the reset, capped at 100 }
+        runs_out_at:
+          type: [string, 'null']
+          description: When the plan reaches 100% at this rate, if before the reset
+        reason:
+          type: [string, 'null']
+          enum: [window_ended, no_recent_readings, short_span, null]
+        reason_text: { type: [string, 'null'] }
+      required:
+        [
+          window_h,
+          rate_pct_per_h,
+          since,
+          until,
+          covered_h,
+          projected_pct,
+          runs_out_at,
+          reason,
+          reason_text,
+        ]
     TaskFields:
       type: object
       additionalProperties: false
@@ -892,6 +926,8 @@ paths:
                             reset_at: { type: string }
                             suggested_model: { type: [string, 'null'] }
                             stale: { type: boolean }
+                            projection_1h: { $ref: '#/components/schemas/ShortProjection' }
+                            projection_2h: { $ref: '#/components/schemas/ShortProjection' }
                         five_hour:
                           { anyOf: [{ $ref: '#/components/schemas/Reading' }, { type: 'null' }] }
   /plans/{id}/readings:

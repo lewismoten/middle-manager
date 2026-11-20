@@ -50,6 +50,13 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
       await expect(page.locator('.weekly .used')).toHaveCount(1);
       await expect(page.locator('.weekly .even')).toHaveCount(1);
       await expect(page.locator('.weekly .proj')).toHaveCount(1);
+      // 1 h and 2 h projections: own dash pattern, end tag and a legend toggle each.
+      await expect(page.locator('.weekly .proj-1h .proj-line')).toHaveCount(1);
+      await expect(page.locator('.weekly .proj-2h .proj-line')).toHaveCount(1);
+      await expect(page.locator('.weekly .legend-toggle')).toHaveCount(2);
+      await expect(page.locator('.weekly .summary .short-projections')).toContainText(
+        /Last 2 h: .* · Last 1 h: /,
+      );
       await expect(page.locator('.weekly .now')).toHaveCount(1);
       await expect(page.locator('.weekly .target')).toHaveCount(1);
       await expect(page.locator('.five-hour svg[role="img"]')).toBeVisible();
@@ -111,6 +118,9 @@ for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
         /burn|steady|conserve|stop/,
       );
       await expect(page.locator('.plan-gauge[data-plan="plan-a"] svg.gauge')).toBeVisible();
+      await expect(
+        page.locator('.plan-gauge[data-plan="plan-a"] .short-projections'),
+      ).toContainText(/^Last 2 h: (\d+% at reset|runs out .+) · Last 1 h: /);
       await expect(page.locator('.plan-gauge[data-plan="plan-b"] .stale')).toContainText('stale');
       await expect(page.locator('.plan-gauge[data-plan="plan-c"]')).toContainText('No readings');
     }

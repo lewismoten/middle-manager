@@ -12,11 +12,15 @@ import {
   pace,
   pastWeeks,
   roundTo,
+  shortProjection,
   STALE_AFTER_H,
   suggestedModel,
   type Mode,
   type PastWeek,
   type Reading,
+  type ShortProjection,
+  type ShortReason,
+  type ShortWindowH,
 } from './pacing.ts';
 import {
   insertReadings,
@@ -28,6 +32,36 @@ import {
 } from './store.ts';
 
 const isoOf = (t: number) => new Date(t).toISOString();
+
+/** A projection at the rate over the last 1 or 2 hours (reported only; the mode never uses it). */
+export interface ShortProjectionView {
+  window_h: ShortWindowH;
+  /** % per hour; null when the readings do not cover enough of the window (see reason). */
+  rate_pct_per_h: number | null;
+  /** The two readings the rate is measured between. */
+  since: string | null;
+  until: string | null;
+  covered_h: number;
+  projected_pct: number | null;
+  /** When the plan reaches 100% at this rate, if before the reset. */
+  runs_out_at: string | null;
+  reason: ShortReason | null;
+  reason_text: string | null;
+}
+
+export function shortProjectionView(s: ShortProjection): ShortProjectionView {
+  return {
+    window_h: s.window_h,
+    rate_pct_per_h: s.rate === null ? null : roundTo(s.rate, 3),
+    since: s.since === null ? null : isoOf(s.since),
+    until: s.until === null ? null : isoOf(s.until),
+    covered_h: roundTo(s.covered_h, 2),
+    projected_pct: s.projected === null ? null : roundTo(s.projected, 1),
+    runs_out_at: s.hit === null ? null : isoOf(s.hit),
+    reason: s.reason,
+    reason_text: s.reason_text,
+  };
+}
 
 export interface WeeklyPace {
   /** False when the newest reset seen is already past: waiting for a reading after the reset. */
@@ -56,6 +90,10 @@ export interface WeeklyPace {
   reading_age_h: number;
   stale: boolean;
   readings: number;
+  /** Projection at the rate over the last 1 h of readings. */
+  projection_1h: ShortProjectionView;
+  /** Projection at the rate over the last 2 h of readings. */
+  projection_2h: ShortProjectionView;
 }
 
 export interface PlanPace {
@@ -125,6 +163,8 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
     reading_age_h: roundTo(a.stale_h, 1),
     stale: a.stale_h > STALE_AFTER_H,
     readings: a.points.length,
+    projection_1h: shortProjectionView(shortProjection(a, now, 1)),
+    projection_2h: shortProjectionView(shortProjection(a, now, 2)),
   };
   return out;
 }
