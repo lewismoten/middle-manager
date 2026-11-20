@@ -8,6 +8,7 @@ import { externalTone, type JobsResponse, type ExternalJob } from './schedules-l
 import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
 import {
+  burnForecastLine,
   getPace,
   modeBadge,
   pct,
@@ -57,6 +58,7 @@ function card(p: PlanPace, now: number): HTMLElement {
       projected: w.projected_pct,
       label,
     }),
+    burnForecastLine(w),
     h(
       'dl',
       { class: 'pg-kv' },

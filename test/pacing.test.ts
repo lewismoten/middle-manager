@@ -115,6 +115,28 @@ describe('pacing matches the reference implementation', () => {
     it(`${e.plan} at ${e.now}: ${e.mode}`, () => compare(e));
   }
 
+  it.each([
+    [-5, 100],
+    [105, 0],
+  ])('bounds the unused forecast for a stored reading of %s%%', (used, unused) => {
+    const config = testConfig({ plans: [{ id: 'sample', name: 'Sample', provider: 'manual' }] });
+    const db = memoryDb(config);
+    const now = Date.UTC(2026, 10, 20);
+    insertReadings(db, [
+      {
+        plan_id: 'sample',
+        window: 'weekly',
+        used_pct: used,
+        read_at: new Date(now).toISOString(),
+        resets_at: new Date(now + 3600_000).toISOString(),
+        machine_id: null,
+        how: null,
+      },
+    ]);
+    expect(planPace(db, config, config.plans[0]!, now).weekly?.unused_pct).toBe(unused);
+    db.close();
+  });
+
   it('gives the same answer through the database', () => {
     const config = testConfig({
       plans: PLANS.map((id) => ({ id, name: id, provider: 'manual', windows: ['weekly'] })),
@@ -130,6 +152,7 @@ describe('pacing matches the reference implementation', () => {
       expect(got.need_pct_per_h).toBe(e.need_pct_per_h);
       expect(got.ratio).toBe(e.ratio);
       expect(got.projected_pct).toBe(roundTo(e.projected, 1));
+      expect(got.unused_pct).toBeCloseTo(Math.max(0, Math.min(100, 100 - got.projected_pct)), 10);
       expect(got.used_pct).toBe(e.used);
       expect(new Date(got.reset_at).getTime()).toBe(e.end);
       expect(got.readings).toBe(e.points);
