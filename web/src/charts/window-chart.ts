@@ -19,8 +19,8 @@ export interface WindowChartSpec {
   end: number;
   now: number;
   points: ChartPoint[];
-  /** Project from the last reading at this rate (% per hour). */
-  projectionRate?: number;
+  /** Weekly projection at reset, or when the allowance runs out. */
+  projection?: ChartPoint & { runsOut: boolean };
   /** When the plan should reach 100% (reset minus the buffer). */
   targetEmpty?: number;
   ticks: 'day' | 'hour';
@@ -52,19 +52,6 @@ function ticks(spec: WindowChartSpec, width: number): { t: number; label: string
     out.push({ t, label: fmt.format(new Date(t)) });
   }
   return out;
-}
-
-/** Where the projection line ends: the reset, or the moment it reaches 100%. */
-export function projectionEnd(
-  last: ChartPoint,
-  rate: number,
-  end: number,
-): { t: number; used: number; runsOut: boolean } {
-  const atEnd = last.used + (rate * (end - last.t)) / HOUR;
-  if (rate > 0 && atEnd > 100) {
-    return { t: last.t + ((100 - last.used) / rate) * HOUR, used: 100, runsOut: true };
-  }
-  return { t: end, used: Math.max(0, atEnd), runsOut: false };
 }
 
 export function windowChart(spec: WindowChartSpec): HTMLElement {
@@ -158,12 +145,12 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
 
     const pts = spec.points;
     const last = pts[pts.length - 1];
-    if (last && spec.projectionRate !== undefined) {
-      const p = projectionEnd(last, spec.projectionRate, spec.end);
+    const p = spec.projection;
+    if (last && p) {
       svg.append(
         s('line', {
           class: 'proj',
-          x1: fix(x(last.t)),
+          x1: fix(x(Math.min(spec.now, spec.end))),
           y1: fix(y(last.used)),
           x2: fix(x(p.t)),
           y2: fix(y(p.used)),

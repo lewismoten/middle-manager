@@ -28,7 +28,8 @@ const EXPECTED = JSON.parse(read('interleaved-expected.json')) as {
   used: number;
   end: number;
   last_t: number;
-  projected: number;
+  recent_rate: number;
+  left_h: number;
   mode: string;
   rate_basis_h: number;
   rate_pct_per_h: number;
@@ -85,7 +86,7 @@ describe('pace with CSV-imported and live readings interleaved', () => {
         basis: e.rate_basis_h,
         need: e.need_pct_per_h,
         ratio: e.ratio,
-        projected: roundTo(e.projected, 1),
+        projected: roundTo(Math.min(100, e.used + e.recent_rate * e.left_h), 1),
         mode: e.mode,
       });
     });

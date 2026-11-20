@@ -2,7 +2,7 @@
 
 import { api } from './api.ts';
 import { h } from './dom.ts';
-import { burnForecast, type Mode, type WeeklyPace } from './plans-logic.ts';
+import { burnForecast, paceDifference, type Mode, type WeeklyPace } from './plans-logic.ts';
 
 export { pct, type Mode, type WeeklyPace } from './plans-logic.ts';
 
@@ -69,6 +69,14 @@ export function modeBadge(mode: Mode): HTMLElement {
 }
 
 export const rate = (v: number) => `${v.toFixed(2)}%/h`;
+
+export const recentRateLabel = (w: WeeklyPace) =>
+  `${rate(w.rate_pct_per_h)} (last ${w.rate_basis_h} h)`;
+
+export function paceDifferenceLine(w: WeeklyPace): HTMLElement | null {
+  const text = paceDifference(w);
+  return text === null ? null : h('span', { class: 'pace-difference' }, text);
+}
 
 export function burnForecastLine(w: WeeklyPace): HTMLElement | null {
   const text = burnForecast(w);

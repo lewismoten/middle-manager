@@ -164,3 +164,30 @@ test('API claim appears in Doing on desktop and mobile', async ({ page, request 
     await page.screenshot({ path: `test-results/mr6/board-${width}-${scheme}.png` });
   }
 });
+
+test('Burndown shows the same recent rate in its summary and table', async ({ page }) => {
+  await page.route('**/api/v1/plans/pace', async (route) => {
+    const response = await route.fetch();
+    const pace = await response.json();
+    Object.assign(pace.plans[0].weekly, {
+      used_pct: 61,
+      even_pace_pct: 91.4,
+      rate_basis_h: 3,
+      rate_pct_per_h: 2.286,
+      rate_24h: 0.466,
+      mode: 'steady',
+      projected_pct: 94.1,
+      runs_out_at: null,
+    });
+    await route.fulfill({ response, json: pace });
+  });
+  await page.goto('/#/burndown');
+  const recent = page
+    .locator('.pacing tr[data-plan="plan-a"]')
+    .getByRole('cell', { name: '2.29%/h (last 3 h)', exact: true });
+  await expect(recent).toBeVisible();
+  const summary = page.locator('.weekly .summary');
+  await expect(summary).toContainText(await recent.innerText());
+  await expect(summary).toContainText('Last 24 h: 0.47%/h');
+  await expect(summary).toContainText('3 pts ahead of even pace');
+});

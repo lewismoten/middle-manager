@@ -41,10 +41,10 @@ export interface WeeklyPace {
   /** % per hour over the last 24 h of readings, and where that span starts. */
   rate_24h: number;
   rate_24h_since: string;
-  /** Used + 24 h rate x hours left, capped at 100. */
+  /** Used + mode rate x hours left, capped at 100. */
   projected_pct: number;
   unused_pct: number;
-  /** When the 24 h rate would reach 100%, if before the reset. */
+  /** When the mode rate would reach 100%, if before the reset. */
   runs_out_at: string | null;
   mode: Mode;
   rate_pct_per_h: number;
@@ -101,7 +101,7 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
   if (!w || !w.points.length) return out;
   const a = analyse(w, now);
   const p = pace(a, now, plan.empty_buffer_hours);
-  const projected = roundTo(a.projected, 1);
+  const projected = roundTo(p.projected, 1);
   out.weekly = {
     current: a.end > now,
     start: isoOf(a.start),
@@ -114,7 +114,7 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
     rate_24h_since: isoOf(a.since),
     projected_pct: projected,
     unused_pct: roundTo(Math.min(100, Math.max(0, 100 - projected)), 1),
-    runs_out_at: a.hit === null ? null : isoOf(a.hit),
+    runs_out_at: p.hit === null ? null : isoOf(p.hit),
     mode: p.mode,
     rate_pct_per_h: roundTo(p.rate, 3),
     rate_basis_h: p.rate_basis_h,

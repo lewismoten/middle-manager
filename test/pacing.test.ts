@@ -151,7 +151,7 @@ describe('pacing matches the reference implementation', () => {
       expect(got.rate_pct_per_h).toBe(e.rate_pct_per_h);
       expect(got.need_pct_per_h).toBe(e.need_pct_per_h);
       expect(got.ratio).toBe(e.ratio);
-      expect(got.projected_pct).toBe(roundTo(e.projected, 1));
+      expect(got.projected_pct).toBe(roundTo(Math.min(100, e.used + e.recent_rate * e.left_h), 1));
       expect(got.unused_pct).toBeCloseTo(Math.max(0, Math.min(100, 100 - got.projected_pct)), 10);
       expect(got.used_pct).toBe(e.used);
       expect(new Date(got.reset_at).getTime()).toBe(e.end);

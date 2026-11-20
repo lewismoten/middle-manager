@@ -6,6 +6,8 @@ import { gauge } from '../charts/gauge.ts';
 import { chartLegend, windowChart, type ChartPoint } from '../charts/window-chart.ts';
 import {
   burnForecastLine,
+  paceDifferenceLine,
+  recentRateLabel,
   fmtDate,
   fmtTime,
   getPace,
@@ -80,7 +82,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
       h('td', {}, modeBadge(w.mode)),
       h('td', { class: 'num' }, pct(w.used_pct, 1)),
       h('td', { class: 'num' }, pct(w.even_pace_pct)),
-      h('td', { class: 'num' }, `${rate(w.rate_pct_per_h)} (${w.rate_basis_h} h)`),
+      h('td', { class: 'num' }, recentRateLabel(w)),
       h('td', { class: 'num' }, rate(w.need_pct_per_h)),
       h('td', { class: 'num' }, pct(w.projected_pct), burnForecastLine(w)),
       h('td', {}, w.suggested_model ?? (w.mode === 'stop' ? 'none new' : '—')),
@@ -279,7 +281,7 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
     h(
       'p',
       { class: 'summary' },
-      `Used ${pct(w.used_pct, 1)} (even pace ${pct(w.even_pace_pct)}), ${rate(w.rate_24h)} over the last 24 h, projected `,
+      `Used ${pct(w.used_pct, 1)} (even pace ${pct(w.even_pace_pct)}), ${recentRateLabel(w)}, projected `,
       h('b', {}, pct(w.projected_pct)),
       ` at the reset ${fmtTime(w.reset_at, tz)}.`,
       w.runs_out_at
@@ -287,12 +289,18 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
         : '',
       ' ',
       readingAge(w, now),
+      h(
+        'span',
+        { title: `Since ${fmtDate(w.rate_24h_since, tz)}` },
+        ` · Last 24 h: ${rate(w.rate_24h)}.`,
+      ),
+      paceDifferenceLine(w),
       burnForecastLine(w),
     ),
     chartLegend([
       { cls: 'used', label: 'Readings' },
       { cls: 'even', label: 'Even pace' },
-      { cls: 'proj', label: 'Projection (24 h rate)' },
+      { cls: 'proj', label: `Projection (last ${w.rate_basis_h} h)` },
       { cls: 'target', label: `Target empty (${p.empty_buffer_hours} h before reset)` },
       { cls: 'now', label: 'Now' },
     ]),
@@ -302,7 +310,11 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
       end,
       now,
       points: pts,
-      projectionRate: w.rate_24h,
+      projection: {
+        t: w.runs_out_at ? Date.parse(w.runs_out_at) : end,
+        used: w.projected_pct,
+        runsOut: w.runs_out_at !== null,
+      },
       targetEmpty: new Date(w.target_empty_at).getTime(),
       ticks: 'day',
       timeZone: tz,
