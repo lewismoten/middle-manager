@@ -60,6 +60,28 @@ export function seedSchedules(db: Db, hermesFile: string, now = Date.now()): voi
     'timers',
     'server-1',
     [
+      ...Array.from({ length: 4 }, (_, i) => ({
+        external_id: `archive-${i + 1}.timer`,
+        name: `Archive batch ${i + 1}`,
+        schedule: 'OnUnitActiveSec=1h',
+        timezone: null,
+        command: null,
+        enabled: false,
+        last_run_at: null,
+        last_status: null,
+        next_run_at: null,
+      })),
+      {
+        external_id: 'sample-index.timer',
+        name: 'Index sample feed',
+        schedule: 'OnUnitActiveSec=2min',
+        timezone: null,
+        command: null,
+        enabled: true,
+        last_run_at: iso(now - 20 * MIN),
+        last_status: 'running',
+        next_run_at: null,
+      },
       {
         external_id: 'sample-backup.timer',
         name: 'Nightly sample backup',

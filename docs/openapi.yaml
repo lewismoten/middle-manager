@@ -132,6 +132,9 @@ components:
         actor: { type: [string, 'null'] }
         kind: { type: string }
         data_json: { type: string }
+    Attention:
+      type: [string, 'null']
+      enum: [failed, stuck, overdue, null]
     Job:
       type: object
       properties:
@@ -145,6 +148,7 @@ components:
         command: { type: [string, 'null'] }
         running: { type: boolean }
         next_run_at: { type: [string, 'null'] }
+        attention: { $ref: '#/components/schemas/Attention' }
         failed_24h: { type: integer }
     JobRun:
       type: object
@@ -391,7 +395,14 @@ paths:
               schema:
                 type: object
                 properties:
-                  { now: { type: string }, jobs: { type: array, items: { type: object } } }
+                  now: { type: string }
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      required: [attention]
+                      properties:
+                        attention: { $ref: '#/components/schemas/Attention' }
   /external-jobs/refresh:
     post:
       summary: Re-read every hermes-cron and systemd-timers collector now

@@ -26,6 +26,7 @@ function job(extra: Partial<Job> = {}): Job {
     command: null,
     collector_id: 'c',
     enabled: true,
+    attention: null,
     timeout_s: 300,
     notify: null,
     created_by: null,
@@ -49,6 +50,7 @@ function ext(source: string, read_at: string, extra: Partial<ExternalJob> = {}):
     timezone: null,
     command: null,
     enabled: true,
+    attention: null,
     last_run_at: null,
     last_status: null,
     next_run_at: null,
@@ -89,8 +91,8 @@ describe('schedules page logic', () => {
   it('groups mirrored jobs by source, oldest read time and any staleness', () => {
     const groups = groupExternal([
       ext('a', '2026-11-19T11:00:00Z'),
-      ext('b', '2026-11-19T11:30:00Z', { kind: 'systemd-timers' }),
       ext('a', '2026-11-19T10:00:00Z', { stale: true }),
+      ext('b', '2026-11-19T11:30:00Z', { kind: 'systemd-timers' }),
     ]);
     expect(groups.map((g) => [g.source, g.jobs.length, g.read_at, g.stale])).toEqual([
       ['a', 2, '2026-11-19T10:00:00Z', true],
