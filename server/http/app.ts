@@ -200,7 +200,7 @@ export function createApp(state: AppState, routes: Route[]) {
     return sendError(res, 404, 'not_found', `No API route ${method} ${url.pathname}`);
   }
 
-  return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     setSecurityHeaders(res);
     let url: URL;
     try {
@@ -230,5 +230,6 @@ export function createApp(state: AppState, routes: Route[]) {
       console.error(`${req.method} ${url.pathname} failed:`, err);
       return sendError(res, 500, 'internal', 'Internal server error');
     }
-  };
+  }
+  return Object.assign(handle, { routes: compiled });
 }

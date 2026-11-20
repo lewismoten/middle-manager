@@ -43,6 +43,7 @@ export interface StartOptions {
 }
 
 export interface Running {
+  routes: ReadonlyArray<Pick<Route, 'method' | 'path'>>;
   server: Server;
   state: AppState;
   url: string;
@@ -123,5 +124,5 @@ export async function startServer(opts: StartOptions): Promise<Running> {
     });
     if (!opts.db) db.close();
   };
-  return { server, state, url, close };
+  return { server, state, url, close, routes: handler.routes };
 }
