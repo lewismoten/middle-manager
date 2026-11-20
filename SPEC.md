@@ -67,6 +67,7 @@ plans:               # subscriptions to pace
     credentials: ~/.claude/.credentials.json
     windows: [weekly, five_hour]
     empty_buffer_hours: 1          # target: run out this long before reset
+    window_hours: 168              # weekly window length (default 7 days)
   - id: codex
     name: "Codex plan"
     provider: codex-sessions
@@ -118,7 +119,8 @@ Secrets (tokens, credentials) never go in config or the DB in plain text; config
 ## 6. API (JSON, `/api/v1`)
 
 Read (open on LAN; private documents need a token): `GET /health`, `/config/public`, `/machines`,
-`/plans`, `/plans/:id/readings?since=`, `/plans/pace` (see 7), `/tasks?status=&project=&q=`,
+`/plans`, `/plans/:id/readings?since=`, `/plans/pace` (see 7), `/plans/:id/windows` (current and
+past weekly windows with how each ended) and `/plans/:id/windows/:window` (one window's readings), `/tasks?status=&project=&q=`,
 `/tasks/:id` (with events and runs), `/runs?active=1&machine=&task=`, `/runs/:id`, `/jobs`,
 `/jobs/:id/runs`, `/external-jobs`, `/documents?collection=`, `/documents/:id` (rendered markdown),
 `/stats` (DB size, row counts, retention).
@@ -149,7 +151,12 @@ results identical on the same input (unit test with a fixture CSV).
    agents running now (count by machine/model), board counts by status, jobs that failed in the last 24 h,
    anything marked "needs a person".
 2. **Burndown** — per plan: weekly chart (readings, even-pace line, projection, "now"), 5-hour window when
-   available, history of past weeks (how much was left unused at each reset), pacing table.
+   available, history of past weeks (how much was left unused at each reset), pacing table. A week
+   picker (Prev / Next, `[` / `]`) shows any past week's chart (final value, ran-out marker, no
+   projections). "Compare with" overlays the last 1-4 weeks or a chosen week, aligned by time since
+   window start (a window of a different length is scaled by elapsed fraction), with an optional
+   average of past weeks. The choice is kept in the URL (`#/burndown?week=&compare=&avg=`) and
+   localStorage. Past windows are formed by grouping readings whose reset times are within 3 h.
 3. **Board** — kanban columns by status with project/assignee filters, swimlanes by agent optional; card
    detail in a side sheet (body, events, linked runs, branch, PR). Sprint/Velocity sub-tabs like the
    reference board.

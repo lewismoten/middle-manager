@@ -87,9 +87,13 @@ function cmpPoint(a: Point, b: Point): number {
 
 /**
  * The current weekly window: the latest future reset (else the latest reset seen) and the
- * distinct readings that belong to it, oldest first.
+ * distinct readings that belong to it, oldest first. `windowMs` is the plan's window length.
  */
-export function currentWindow(readings: Reading[], now: number): WeekWindow | null {
+export function currentWindow(
+  readings: Reading[],
+  now: number,
+  windowMs = WEEK_MS,
+): WeekWindow | null {
   const mine = readings.filter((r) => r.resets_at && Number.isFinite(r.used_pct));
   if (!mine.length) return null;
   const resets = mine.map((r) => ms(r.resets_at as string));
@@ -111,7 +115,7 @@ export function currentWindow(readings: Reading[], now: number): WeekWindow | nu
     points.push(p);
   });
   points.sort(cmpPoint);
-  return { start: end - WEEK_MS, end, points };
+  return { start: end - windowMs, end, points };
 }
 
 function ratePerHour(points: Point[], start: number): { rate: number; since: number } {
@@ -127,7 +131,7 @@ export function analyse(w: WeekWindow, now: number): Analysis {
   const { start, end, points } = w;
   const last = points[points.length - 1] as Point;
   const used = last.used;
-  const totalH = WEEK_MS / HOUR_MS;
+  const totalH = (end - start) / HOUR_MS;
   const leftH = Math.max(0, (end - now) / HOUR_MS);
   const pace = Math.min(100, Math.max(0, ((now - start) / HOUR_MS / totalH) * 100));
   const { rate, since } = ratePerHour(points, start);
@@ -366,4 +370,173 @@ export function pastWeeks(readings: Reading[], now: number): PastWeek[] {
       };
     })
     .reverse();
+}
+
+// ---- Plan windows (current and past), for browsing and comparing weeks ----
+// Readings report the reset time with jitter (milliseconds to minutes, and a few minutes between
+// two sources), so windows are formed by chaining readings whose resets lie within SAME_RESET_MS
+// of each other, never by exact resets_at.
+
+export interface PlanWindow {
+  /** Stable id: the window's reset time (median of its readings' resets_at), ISO. */
+  id: string;
+  start: number;
+  end: number;
+  /** Window length in hours (the plan's length, shorter when the previous reset came early). */
+  length_h: number;
+  current: boolean;
+  points: Point[];
+  final: number;
+  peak: number;
+  /** First reading at or over 100%, if any. */
+  ran_out_at: number | null;
+  /** Data starts well after the window start or stops well before the reset. */
+  partial: boolean;
+}
+
+/** A window's readings are "partial" when they start or stop this far from its edges. */
+export const PARTIAL_GAP_MS = 6 * HOUR_MS;
+
+function median(xs: number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.floor((s.length - 1) / 2)] as number;
+}
+
+/**
+ * Every weekly window in the readings, newest first. `windowMs` is the plan's window length.
+ * A window starts `windowMs` before its reset, or at the previous window's reset when that came
+ * more than SAME_RESET_MS later (an early reset makes a shorter window).
+ */
+export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS): PlanWindow[] {
+  const sorted = readings
+    .filter((r) => r.resets_at && Number.isFinite(r.used_pct))
+    .map((r) => ({ r, reset: ms(r.resets_at as string) }))
+    .filter((x) => Number.isFinite(x.reset))
+    .sort((a, b) => a.reset - b.reset);
+  const groups: { last: number; items: typeof sorted }[] = [];
+  for (const x of sorted) {
+    const g = groups[groups.length - 1];
+    if (g && x.reset - g.last < SAME_RESET_MS) {
+      g.items.push(x);
+      g.last = x.reset;
+    } else groups.push({ last: x.reset, items: [x] });
+  }
+  const out: PlanWindow[] = [];
+  let prevEnd: number | null = null;
+  for (const g of groups) {
+    const end = median(g.items.map((x) => x.reset));
+    let start = end - windowMs;
+    if (prevEnd !== null && prevEnd > start + SAME_RESET_MS) start = prevEnd;
+    prevEnd = end;
+    const seen = new Set<string>();
+    const points: Point[] = [];
+    for (const { r } of g.items) {
+      const p: Point = {
+        t: ms(r.read_at),
+        used: r.used_pct,
+        machine: r.machine_id ?? '',
+        how: r.how ?? '',
+      };
+      const key = JSON.stringify([p.t, p.used, p.machine, p.how]);
+      if (seen.has(key) || !Number.isFinite(p.t)) continue;
+      seen.add(key);
+      points.push(p);
+    }
+    points.sort(cmpPoint);
+    if (!points.length) continue;
+    // The newest reading wins; at the same instant the higher one (as pastWeeks does).
+    const final = (points[points.length - 1] as Point).used;
+    const hit = points.find((p) => p.used >= 100);
+    const current = g.last > now;
+    const first = (points[0] as Point).t;
+    const last = (points[points.length - 1] as Point).t;
+    out.push({
+      id: new Date(end).toISOString(),
+      start,
+      end,
+      length_h: (end - start) / HOUR_MS,
+      current,
+      points,
+      final,
+      peak: Math.max(...points.map((p) => p.used)),
+      ran_out_at: hit ? hit.t : null,
+      partial: first - start > PARTIAL_GAP_MS || (!current && !hit && end - last > PARTIAL_GAP_MS),
+    });
+  }
+  return out.reverse();
+}
+
+/** The window a time names: the one whose reset is within SAME_RESET_MS of it. */
+export function findWindow(windows: PlanWindow[], reset: number): PlanWindow | null {
+  let best: PlanWindow | null = null;
+  for (const w of windows) {
+    const d = Math.abs(w.end - reset);
+    if (d < SAME_RESET_MS && (!best || d < Math.abs(best.end - reset))) best = w;
+  }
+  return best;
+}
+
+export interface WindowStats {
+  /** 100 - final, or 0 when it ran out. */
+  unused_pct: number;
+  /** Unused share expressed as hours of even-pace use (unused % x window hours). */
+  unused_h: number;
+  /** Hours from running out to the reset (no allowance left), or null. */
+  locked_out_h: number | null;
+  target_empty_at: number;
+  /** Final % minus the 100% target (0 when it ran out). Negative = left unused. */
+  target_gap_pct: number;
+  /** Hours it ran out before the target-empty time (negative = after), or null. */
+  ran_out_early_h: number | null;
+  /** Time-weighted mean of (used - even pace) over the readings, % points (+ = ahead). */
+  mean_vs_even_pct: number | null;
+  /** Time-weighted mean of |used - even pace|, % points: lower = steadier pacing. */
+  mean_abs_vs_even_pct: number | null;
+}
+
+/**
+ * Summary numbers for one window. Between readings the used % is taken as linear; the window
+ * start counts as 0% only when the readings begin near it (not for a partial week).
+ */
+export function windowStats(w: PlanWindow, emptyBufferHours = 1): WindowStats {
+  const ranOut = w.ran_out_at !== null;
+  const unused = ranOut ? 0 : Math.max(0, 100 - w.final);
+  const target = w.end - emptyBufferHours * HOUR_MS;
+  const len = w.end - w.start;
+  const even = (t: number) => Math.min(100, Math.max(0, ((t - w.start) / len) * 100));
+  const pts: { t: number; used: number }[] = w.points
+    .filter((p) => p.t >= w.start && p.t <= w.end)
+    .map((p) => ({ t: p.t, used: p.used }));
+  if (pts.length && (pts[0] as { t: number }).t - w.start <= PARTIAL_GAP_MS) {
+    pts.unshift({ t: w.start, used: 0 });
+  }
+  let area = 0;
+  let absArea = 0;
+  let span = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1] as { t: number; used: number };
+    const b = pts[i] as { t: number; used: number };
+    const dt = b.t - a.t;
+    if (dt <= 0) continue;
+    // Difference is linear on the segment; integrate exactly, splitting at a sign change.
+    const d0 = a.used - even(a.t);
+    const d1 = b.used - even(b.t);
+    area += ((d0 + d1) / 2) * dt;
+    if (d0 * d1 >= 0) absArea += ((Math.abs(d0) + Math.abs(d1)) / 2) * dt;
+    else {
+      const f = Math.abs(d0) / (Math.abs(d0) + Math.abs(d1));
+      absArea += (Math.abs(d0) / 2) * f * dt + (Math.abs(d1) / 2) * (1 - f) * dt;
+    }
+    span += dt;
+  }
+  return {
+    unused_pct: unused,
+    unused_h: (unused / 100) * w.length_h,
+    locked_out_h: ranOut ? Math.max(0, (w.end - (w.ran_out_at as number)) / HOUR_MS) : null,
+    target_empty_at: target,
+    target_gap_pct: ranOut ? 0 : w.final - 100,
+    ran_out_early_h: ranOut ? (target - (w.ran_out_at as number)) / HOUR_MS : null,
+    mean_vs_even_pct: span > 0 ? area / span : null,
+    mean_abs_vs_even_pct: span > 0 ? absArea / span : null,
+  };
 }

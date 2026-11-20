@@ -124,6 +124,20 @@ curl -fsS "$MM_URL/api/v1/plans/pace?plan=claude" | jq '.plans[0].weekly.project
 # { "window_h": 2, "rate_pct_per_h": 1.42, "projected_pct": 97.3, "runs_out_at": null, ... }
 ```
 
+Past weeks: `GET /plans/{id}/windows` lists a plan's weekly windows, newest first (the current
+one first, unless `current=0`; `limit` 1-200, default 52). Each has its start and reset, final
+and peak used %, whether and when it ran out, `unused_h` (what was left, in hours of even-pace
+use), the gap from the target and `mean_abs_vs_even_pct` (how far it strayed from even pace;
+lower is steadier). Readings are grouped by reset time with a 3 h tolerance, because providers
+report the reset with jitter. `GET /plans/{id}/windows/{window}` returns one window and its
+readings; `window` is `current` or the window's `id` (its reset time):
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/claude/windows?current=0&limit=4" \
+  | jq '.windows[] | {id, final_pct, ran_out_at, unused_h, mean_abs_vs_even_pct}'
+curl -fsS "$MM_URL/api/v1/plans/claude/windows/2026-11-13T23:00:00.000Z" | jq '.readings | length'
+```
+
 External jobs accept `kind` (hermes-cron or systemd-timers) and `status` (running, ok, failed, error).
 
 ## Collectors

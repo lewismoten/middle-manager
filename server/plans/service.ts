@@ -8,6 +8,10 @@ import { MAX_CSV_BYTES, readingsFromCsv } from './csv.ts';
 import {
   analyse,
   currentWindow,
+  findWindow,
+  planWindows,
+  windowStats,
+  type PlanWindow,
   HOUR_MS,
   pace,
   pastWeeks,
@@ -101,6 +105,8 @@ export interface PlanPace {
   name: string;
   provider: PlanConfig['provider'];
   empty_buffer_hours: number;
+  /** Length of the weekly window in hours. */
+  window_hours: number;
   models: string[];
   weekly: WeeklyPace | null;
   five_hour: StoredReading | null;
@@ -131,11 +137,12 @@ export function planPace(db: Db, config: Config, plan: PlanConfig, now = Date.no
     name: plan.name,
     provider: plan.provider,
     empty_buffer_hours: plan.empty_buffer_hours,
+    window_hours: plan.window_hours,
     models: config.models[plan.id] ?? [],
     weekly: null,
     five_hour: plan.windows.includes('five_hour') ? latestReading(db, plan.id, 'five_hour') : null,
   };
-  const w = currentWindow(windowReadings(db, plan.id, now), now);
+  const w = currentWindow(windowReadings(db, plan.id, now), now, plan.window_hours * HOUR_MS);
   if (!w || !w.points.length) return out;
   const a = analyse(w, now);
   const p = pace(a, now, plan.empty_buffer_hours);
@@ -203,6 +210,110 @@ export function planSummaries(db: Db, config: Config, now = Date.now()) {
       past_weeks: planPastWeeks(db, p.id, now),
     };
   });
+}
+
+// ---- Windows: the current and past weekly windows of a plan ----
+
+export interface WindowView {
+  /** The window's reset time, ISO; use it to fetch the window's readings. */
+  id: string;
+  current: boolean;
+  start: string;
+  reset_at: string;
+  length_h: number;
+  readings: number;
+  first_reading_at: string;
+  last_reading_at: string;
+  /** Used % at the newest reading (so far, for the current window). */
+  final_pct: number;
+  peak_pct: number;
+  ran_out: boolean;
+  ran_out_at: string | null;
+  unused_pct: number;
+  unused_h: number;
+  locked_out_h: number | null;
+  target_empty_at: string;
+  target_gap_pct: number;
+  ran_out_early_h: number | null;
+  mean_vs_even_pct: number | null;
+  mean_abs_vs_even_pct: number | null;
+  partial: boolean;
+}
+
+const round = (v: number | null, d: number) => (v === null ? null : roundTo(v, d));
+
+export function windowView(w: PlanWindow, emptyBufferHours: number): WindowView {
+  const s = windowStats(w, emptyBufferHours);
+  return {
+    id: w.id,
+    current: w.current,
+    start: isoOf(w.start),
+    reset_at: isoOf(w.end),
+    length_h: roundTo(w.length_h, 2),
+    readings: w.points.length,
+    first_reading_at: isoOf((w.points[0] as { t: number }).t),
+    last_reading_at: isoOf((w.points[w.points.length - 1] as { t: number }).t),
+    final_pct: w.final,
+    peak_pct: w.peak,
+    ran_out: w.ran_out_at !== null,
+    ran_out_at: w.ran_out_at === null ? null : isoOf(w.ran_out_at),
+    unused_pct: roundTo(s.unused_pct, 1),
+    unused_h: roundTo(s.unused_h, 1),
+    locked_out_h: round(s.locked_out_h, 1),
+    target_empty_at: isoOf(s.target_empty_at),
+    target_gap_pct: roundTo(s.target_gap_pct, 1),
+    ran_out_early_h: round(s.ran_out_early_h, 1),
+    mean_vs_even_pct: round(s.mean_vs_even_pct, 1),
+    mean_abs_vs_even_pct: round(s.mean_abs_vs_even_pct, 1),
+    partial: w.partial,
+  };
+}
+
+/** All weekly windows of a plan from its stored readings, newest first. */
+export function windowsOf(db: Db, plan: PlanConfig, now = Date.now()): PlanWindow[] {
+  const rows = db
+    .prepare(
+      `SELECT read_at, used_pct, resets_at, machine_id, how FROM plan_readings
+        WHERE plan_id = ? AND "window" = 'weekly' AND resets_at IS NOT NULL`,
+    )
+    .all(plan.id) as unknown as Reading[];
+  return planWindows(rows, now, plan.window_hours * HOUR_MS);
+}
+
+export function planWindowList(
+  db: Db,
+  plan: PlanConfig,
+  opts: { now?: number; limit?: number; includeCurrent?: boolean } = {},
+) {
+  const all = windowsOf(db, plan, opts.now);
+  const list = all.filter((w) => opts.includeCurrent !== false || !w.current);
+  return {
+    plan: plan.id,
+    window_hours: plan.window_hours,
+    empty_buffer_hours: plan.empty_buffer_hours,
+    windows: list.slice(0, opts.limit ?? 52).map((w) => windowView(w, plan.empty_buffer_hours)),
+  };
+}
+
+/** One window and its readings, by reset time (within the same-reset tolerance) or "current". */
+export function planWindowDetail(db: Db, plan: PlanConfig, which: string, now = Date.now()) {
+  const all = windowsOf(db, plan, now);
+  const w =
+    which === 'current'
+      ? (all.find((x) => x.current) ?? null)
+      : findWindow(all, new Date(which).getTime());
+  if (!w) return null;
+  return {
+    plan: plan.id,
+    window_hours: plan.window_hours,
+    window: windowView(w, plan.empty_buffer_hours),
+    readings: w.points.map((p) => ({
+      read_at: isoOf(p.t),
+      used_pct: p.used,
+      machine_id: p.machine || null,
+      how: p.how || null,
+    })),
+  };
 }
 
 // ---- Collectors: plan ids, "csv-import", or configured collectors of kind csv-import ----

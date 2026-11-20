@@ -1,10 +1,13 @@
 // A plan window chart: used % over the window with the even-pace line, the projection at the
-// recent rate, the 1 h / 2 h projections, the target-empty marker and a "now" line. Inline SVG,
-// redrawn on resize, with a hover crosshair that reads out the nearest reading and where each
+// recent rate, the 1 h / 2 h projections, the target-empty marker and a "now" line. A past week
+// adds its final value and the time it ran out; other weeks can be overlaid (aligned by the
+// caller onto this window's time axis). Inline SVG, redrawn on resize, with a hover crosshair
+// that reads out the nearest reading, each overlay's value at that point and where each
 // projection ends.
 
 import { h } from '../dom.ts';
 import { projectionSegment } from './projection-geometry.ts';
+import { spreadLabels, valueAt } from '../pages/past-weeks-logic.ts';
 import { linear, points, responsive, s, fix } from './svg.ts';
 
 const HOUR = 3600_000;
@@ -30,6 +33,16 @@ export interface WindowChartSpec {
   shortProjections?: ShortLine[];
   /** When the plan should reach 100% (reset minus the buffer). */
   targetEmpty?: number;
+  /** Draw the readings from 0% at the window start (false for a week whose data starts late). */
+  fromZero?: boolean;
+  /** A finished week's last reading, marked and labeled with its value. */
+  final?: ChartPoint;
+  /** When a week ran out (first reading at 100%). */
+  ranOut?: number;
+  /** Other weeks drawn under the readings, already on this window's time axis. */
+  overlays?: Overlay[];
+  /** Overlays whose key is in here start hidden (legend toggles). */
+  hidden?: ReadonlySet<string>;
   ticks: 'day' | 'hour';
   timeZone?: string;
   height?: number;
@@ -45,6 +58,21 @@ export interface ShortLine {
   runsOut: boolean;
   /** Hover text, e.g. "Last 1 h: 97% at reset". */
   readout: string;
+}
+
+export interface Overlay {
+  /** Window id, or "avg"; elements carry data-overlay=<key>. */
+  key: string;
+  /** End label, e.g. "Nov 6–13: 91%". */
+  label: string;
+  /** Compact end label for narrow charts, e.g. "Nov 6: 91%". */
+  short: string;
+  /** Name in the hover readout, e.g. "Nov 6–13". */
+  name: string;
+  points: ChartPoint[];
+  dash: string;
+  /** Style slot 0-3 (newest first) or "avg". */
+  slot: number | 'avg';
 }
 
 /** End marker shapes for the short projections, in order: square, then triangle. */
@@ -87,7 +115,12 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
 
   function draw(width: number) {
     const height = spec.height ?? Math.max(200, Math.min(270, Math.round(width * 0.36)));
-    const m = { l: 40, r: 14, t: 18, b: 26 };
+    // Overlays keep their end labels in a gutter right of the plot, clear of the projection
+    // tags; narrow charts use a smaller gutter and compact labels.
+    const hasOv = (spec.overlays?.length ?? 0) > 0;
+    const wide = width >= 640;
+    const gutter = hasOv ? (wide ? 128 : 74) : 0;
+    const m = { l: 40, r: 14 + gutter, t: 18, b: 26 };
     const x = linear([spec.start, spec.end], [m.l, width - m.r]);
     const y = linear([0, 100], [height - m.b, m.t]);
     const svg = s('svg', {
@@ -168,6 +201,44 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
       );
     }
 
+    const overlays = spec.overlays ?? [];
+    const ovEnds = overlays.map((o) => o.points[o.points.length - 1]);
+    const labelYs = spreadLabels(
+      ovEnds.map((e) => (e ? y(e.used) + 4 : m.t)),
+      13,
+      m.t + 4,
+      height - m.b - 4,
+    );
+    const plotRight = width - m.r;
+    overlays.forEach((o, i) => {
+      const end = ovEnds[i];
+      if (!end) return;
+      const g = s('g', {
+        class: `overlay ov-${o.slot}${spec.hidden?.has(o.key) ? ' ov-hidden' : ''}`,
+        'data-overlay': o.key,
+      });
+      g.append(
+        s('polyline', {
+          class: 'ov-line',
+          points: points(o.points.map((q): [number, number] => [x(q.t), y(q.used)])),
+          'stroke-dasharray': o.dash,
+        }),
+      );
+      const ex = fix(x(end.t));
+      const ey = fix(y(end.used));
+      const ly = fix(labelYs[i] as number);
+      g.append(
+        s('circle', { class: 'ov-end', cx: ex, cy: ey, r: 2.5 }),
+        s('line', { class: 'ov-leader', x1: ex + 3, y1: ey, x2: plotRight + 6, y2: ly - 4 }),
+        s(
+          'text',
+          { class: `ov-label${wide ? '' : ' ov-label-short'}`, x: plotRight + 9, y: ly },
+          wide ? o.label : o.short,
+        ),
+      );
+      svg.append(g);
+    });
+
     const pts = spec.points;
     const last = pts[pts.length - 1];
     const p = spec.projection;
@@ -225,8 +296,11 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
 
     if (pts.length) {
       const line: [number, number][] = [
-        [x(spec.start), y(0)],
-        ...pts.map((p): [number, number] => [x(p.t), y(p.used)]),
+        ...(spec.fromZero === false ? [] : [[x(spec.start), y(0)] as [number, number]]),
+        ...pts.map((p): [number, number] => [
+          x(Math.min(Math.max(p.t, spec.start), spec.end)),
+          y(p.used),
+        ]),
       ];
       svg.append(s('polyline', { class: 'used', points: points(line) }));
       if (pts.length <= 40) {
@@ -235,6 +309,47 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
           dots.append(s('circle', { cx: fix(x(p.t)), cy: fix(y(p.used)), r: 3.5 }));
         svg.append(dots);
       }
+    }
+
+    if (spec.ranOut !== undefined) {
+      const rx = fix(x(Math.min(Math.max(spec.ranOut, spec.start), spec.end)));
+      const right = rx > width - m.r - 70;
+      svg.append(
+        s('line', { class: 'ran-out-rule', x1: rx, x2: rx, y1: fix(y(100)), y2: height - m.b }),
+        s('circle', { class: 'runs-out ran-out', cx: rx, cy: fix(y(100)), r: 5 }),
+        s(
+          'text',
+          {
+            class: 'ran-out-label',
+            x: right ? rx - 8 : rx + 8,
+            // In the top margin, so it never meets the final-value label below the line.
+            y: fix(y(100)) - 6,
+            'text-anchor': right ? 'end' : 'start',
+          },
+          'ran out',
+        ),
+      );
+    }
+    if (spec.final) {
+      const fx = fix(x(Math.min(Math.max(spec.final.t, spec.start), spec.end)));
+      const fy = fix(y(spec.final.used));
+      const right = fx > width - m.r - 50;
+      svg.append(
+        s('path', {
+          class: 'final-mark',
+          d: `M${fx},${fy - 6} L${fx + 6},${fy} L${fx},${fy + 6} L${fx - 6},${fy} Z`,
+        }),
+        s(
+          'text',
+          {
+            class: 'final-label',
+            x: right ? fx - 9 : fx + 9,
+            y: spec.ranOut === undefined && fy > m.t + 20 ? fy - 8 : fy + 18,
+            'text-anchor': right ? 'end' : 'start',
+          },
+          `${Math.round(spec.final.used)}%`,
+        ),
+      );
     }
 
     // Hover: crosshair and the nearest reading.
@@ -277,6 +392,17 @@ export function windowChart(spec: WindowChartSpec): HTMLElement {
           best.note ? h('span', { class: 'muted' }, ` · ${best.note}`) : '',
         ),
         p?.readout ? h('div', { class: 'tip-proj' }, p.readout) : '',
+        ...overlays.map((o) => {
+          const v = valueAt(o.points, best.t);
+          return h(
+            'div',
+            {
+              class: `tip-overlay${spec.hidden?.has(o.key) ? ' ov-hidden' : ''}`,
+              'data-overlay': o.key,
+            },
+            `${o.name}: ${v === null ? 'no reading' : `${v.toFixed(1)}%`}`,
+          );
+        }),
         ...shorts.map((sp) => h('div', { class: 'tip-proj', 'data-proj': sp.key }, sp.readout)),
       );
       tip.hidden = false;

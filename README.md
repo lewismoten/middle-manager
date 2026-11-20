@@ -39,8 +39,12 @@ still planned.
 ### Burndown
 
 Per plan: the weekly window chart (readings, even-pace line, projection, target-empty marker and
-"now", plus projections at the last 1 h and 2 h burn rate that you can toggle from the legend), the 5-hour window when the plan reports one, how much was left unused at each past reset,
-and a pacing table with the mode (burn, steady, conserve, stop) and the suggested model rung.
+"now", plus projections at the last 1 h and 2 h burn rate that you can toggle from the legend), the 5-hour window when the plan reports one, a past-weeks table (final %, whether and when it ran
+out, hours left unused at the reset, distance from the target and from even pace), and a pacing
+table with the mode (burn, steady, conserve, stop) and the suggested model rung. Pick any past week to see its chart (Prev / Next, or the `[` and
+`]` keys), and compare with the last 1-4 weeks, a chosen week or their average: other weeks are
+drawn as thinner dashed lines, aligned by time since the window started, labeled at the end and
+read out on hover. A plan whose window is not 7 days sets `window_hours`.
 
 ![Burndown: weekly chart, 5-hour window and pacing table](docs/images/burndown.png)
 

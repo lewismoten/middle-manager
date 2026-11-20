@@ -17,6 +17,7 @@ export function publicConfig(config: Config, version: string) {
       provider: p.provider,
       windows: p.windows,
       empty_buffer_hours: p.empty_buffer_hours,
+      window_hours: p.window_hours,
       models: config.models[p.id] ?? [],
     })),
     local_models: config.local_models.map(({ id, name, kind }) => ({ id, name, kind })),

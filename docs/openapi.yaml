@@ -143,6 +143,45 @@ components:
         kind: { type: string }
         ok: { type: boolean }
         error: { type: string }
+    PlanWindow:
+      type: object
+      description: One weekly window of a plan and how it ended (so far, for the current one).
+      properties:
+        id: { type: string, description: 'The reset time (median of the readings), ISO.' }
+        current: { type: boolean }
+        start: { type: string }
+        reset_at: { type: string }
+        length_h:
+          type: number
+          description: The plan's window_hours, or less when the previous reset came early.
+        readings: { type: integer }
+        first_reading_at: { type: string }
+        last_reading_at: { type: string }
+        final_pct: { type: number, description: Used % at the newest reading. }
+        peak_pct: { type: number }
+        ran_out: { type: boolean, description: A reading reached 100%. }
+        ran_out_at: { type: [string, 'null'], description: The first reading at 100%. }
+        unused_pct: { type: number, description: '100 - final_pct, or 0 when it ran out.' }
+        unused_h:
+          type: number
+          description: Unused share in hours of even-pace use (unused_pct x length_h / 100).
+        locked_out_h: { type: [number, 'null'], description: Hours from running out to the reset. }
+        target_empty_at: { type: string, description: Reset minus empty_buffer_hours. }
+        target_gap_pct:
+          type: number
+          description: final_pct - 100 (0 when it ran out); negative means left unused.
+        ran_out_early_h:
+          type: [number, 'null']
+          description: Hours it ran out before target_empty_at (negative = after).
+        mean_vs_even_pct:
+          type: [number, 'null']
+          description: Time-weighted mean of used % minus even pace (+ = ahead).
+        mean_abs_vs_even_pct:
+          type: [number, 'null']
+          description: Time-weighted mean distance from even pace; lower is steadier.
+        partial:
+          type: boolean
+          description: Readings start over 6 h after the start or stop over 6 h before the reset.
     Reading:
       type: object
       properties:
@@ -915,6 +954,9 @@ paths:
                         plan: { type: string }
                         name: { type: string }
                         provider: { type: string }
+                        empty_buffer_hours: { type: number }
+                        window_hours:
+                          { type: number, description: Length of the weekly window in hours. }
                         models: { type: array, items: { type: string } }
                         weekly:
                           type: [object, 'null']
@@ -984,6 +1026,70 @@ paths:
                   readings: { type: array, items: { $ref: '#/components/schemas/Reading' } }
                   added: { type: integer }
                   skipped: { type: integer }
+  /plans/{id}/windows:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    get:
+      summary: List a plan's weekly windows (current and past) with how each ended
+      description: >-
+        Readings are grouped into windows by their reported reset time, allowing for jitter
+        (resets within 3 h of each other are the same window). Newest first. Retention
+        (plan_readings_days) limits how far back windows go.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 52 }
+        - in: query
+          name: current
+          schema: { type: string, enum: ['0', '1'], default: '1' }
+          description: 0 leaves out the current window.
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '404': { description: No such plan }
+        '200':
+          description: The plan's windows, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  window_hours: { type: number }
+                  empty_buffer_hours: { type: number }
+                  windows: { type: array, items: { $ref: '#/components/schemas/PlanWindow' } }
+  /plans/{id}/windows/{window}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - in: path
+        name: window
+        required: true
+        schema: { type: string }
+        description: >-
+          "current", or the window's reset time (its id from the list; any time within 3 h of
+          the reset matches).
+    get:
+      summary: Read one weekly window and its readings
+      responses:
+        '400': { description: The window is not "current" or an ISO time with a zone }
+        '404': { description: No such plan, or no window resets near that time }
+        '200':
+          description: The window and its readings, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  window_hours: { type: number }
+                  window: { $ref: '#/components/schemas/PlanWindow' }
+                  readings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        read_at: { type: string }
+                        used_pct: { type: number }
+                        machine_id: { type: [string, 'null'] }
+                        how: { type: [string, 'null'] }
   /plans/collectors/{id}/run:
     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
     post:

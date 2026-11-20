@@ -1,6 +1,7 @@
 // Plan pacing data from the API, plus the formatting both plan pages share.
 
 import { api } from './api.ts';
+import type { WindowSummary } from './pages/past-weeks-logic.ts';
 import { h } from './dom.ts';
 import {
   burnForecast,
@@ -36,6 +37,7 @@ export interface PlanPace {
   name: string;
   provider: string;
   empty_buffer_hours: number;
+  window_hours?: number;
   models: string[];
   weekly: WeeklyPace | null;
   five_hour: Reading | null;
@@ -63,6 +65,20 @@ export interface PlanSummary {
   latest: Record<string, Reading | null>;
   past_weeks: PastWeek[];
 }
+
+export interface WindowDetail {
+  plan: string;
+  window_hours: number;
+  window: WindowSummary;
+  readings: { read_at: string; used_pct: number; machine_id: string | null; how: string | null }[];
+}
+
+export const getWindows = (id: string) =>
+  api<{ plan: string; window_hours: number; windows: WindowSummary[] }>(
+    `/plans/${encodeURIComponent(id)}/windows`,
+  );
+export const getWindow = (id: string, window: string) =>
+  api<WindowDetail>(`/plans/${encodeURIComponent(id)}/windows/${encodeURIComponent(window)}`);
 
 export const getPace = () => api<PaceResponse>('/plans/pace');
 export const getPlans = () => api<{ plans: PlanSummary[] }>('/plans');

@@ -1,6 +1,7 @@
 // Synthetic plan readings for the e2e server, relative to now: plan-a has a live week with
 // readings every 2 h, then every 20 min for the last couple of hours as the burn picks up (so the
-// 1 h and 2 h projections differ from the longer one), two finished weeks and a 5-hour window;
+// 1 h and 2 h projections differ from the longer one), two finished weeks (the older one runs out
+// before its reset) and a 5-hour window;
 // plan-b has a stale reading.
 
 import type { Db } from '../server/db/index.ts';
@@ -19,7 +20,9 @@ export function seedPlanReadings(db: Db, now = Date.now()): void {
     let used = 0;
     let t = start + 2 * HOUR;
     for (let i = 0; t < stop; t += 2 * HOUR, i++) {
-      used = Math.min(100, used + 0.35 + ((i * 7) % 5) * 0.12 + (week === 1 ? 0.15 : 0));
+      // Week 2 burns fast and runs out on its last day (for the ran-out marker).
+      const extra = week === 1 ? 0.15 : week === 2 ? 0.7 : 0;
+      used = Math.min(100, used + 0.35 + ((i * 7) % 5) * 0.12 + extra);
       rows.push({
         plan_id: 'plan-a',
         window: 'weekly',

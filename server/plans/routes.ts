@@ -6,6 +6,8 @@ import { CollectorError } from './collectors.ts';
 import {
   allPace,
   CollectorInputError,
+  planWindowDetail,
+  planWindowList,
   planSummaries,
   resolveCollector,
   runCollector,
@@ -70,6 +72,46 @@ export const planRoutes: Route[] = [
         plan: plan.id,
         readings: listReadings(ctx.state.db, plan.id, { since, window, limit }),
       };
+    },
+  },
+  {
+    method: 'GET',
+    path: '/plans/:id/windows',
+    handler: (ctx) => {
+      const plan = planOr404(ctx);
+      const q = ctx.url.searchParams;
+      checkQuery(q, { current: ['0', '1'], limit: null });
+      const raw = q.get('limit');
+      const limit = raw === null ? 52 : Number(raw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        throw new HttpError(400, 'invalid_input', 'limit must be a whole number from 1 to 200');
+      }
+      return planWindowList(ctx.state.db, plan, {
+        limit,
+        includeCurrent: q.get('current') !== '0',
+      });
+    },
+  },
+  {
+    method: 'GET',
+    path: '/plans/:id/windows/:window',
+    handler: (ctx) => {
+      const plan = planOr404(ctx);
+      const which = ctx.params.window ?? '';
+      if (which !== 'current') {
+        try {
+          isoTime(which, 'window');
+        } catch {
+          throw new HttpError(
+            400,
+            'bad_request',
+            'window must be "current" or a reset time with a zone, such as 2026-11-20T23:00:00Z',
+          );
+        }
+      }
+      const out = planWindowDetail(ctx.state.db, plan, which);
+      if (!out) throw new HttpError(404, 'not_found', `No weekly window resetting at ${which}`);
+      return out;
     },
   },
   {

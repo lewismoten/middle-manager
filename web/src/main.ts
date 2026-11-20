@@ -262,7 +262,10 @@ function renderPage(tab: Tab, focus: boolean): void {
 function route(focus: boolean): void {
   const tab = tabFromHash(location.hash);
   const want = `#/${tab.id}`;
-  if (location.hash !== want) history.replaceState(null, '', want);
+  // A page may keep its state in a query after the tab (#/burndown?week=...).
+  if (location.hash !== want && !location.hash.startsWith(`${want}?`)) {
+    history.replaceState(null, '', want);
+  }
   renderTabs(tab);
   renderPage(tab, focus);
 }
