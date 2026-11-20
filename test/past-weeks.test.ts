@@ -103,9 +103,33 @@ describe('planWindows: grouping readings into windows', () => {
     expect(ws).toHaveLength(2);
     expect(ws[1]!.end).toBe(early);
     expect(ws[0]!.start).toBe(RESET - WEEK_MS); // a full week from the earlier reset
-    const shorter = planWindows([...week(RESET - 72 * H), ...week(RESET, { to: NOW })], NOW);
+    const shorter = planWindows(
+      [...week(RESET - 72 * H), ...week(RESET, { from: RESET - 71 * H, to: NOW })],
+      NOW,
+    );
     expect(shorter[0]!.start).toBe(RESET - 72 * H);
     expect(shorter[0]!.length_h).toBe(72);
+  });
+
+  it('keeps a full-length window when the previous one was reset early', () => {
+    // The provider reset the plan 3 days before the reported reset; the new window's readings
+    // start right away, before the old window's reported reset.
+    const oldReset = RESET - 4 * 24 * H;
+    const resetAt = RESET - WEEK_MS + H; // when the early reset happened
+    const now = resetAt + 24 * H;
+    const list = [
+      ...week(oldReset, { to: resetAt - H }),
+      ...week(RESET, { from: resetAt + H, to: now }),
+    ];
+    const ws = planWindows(list, now);
+    expect(ws).toHaveLength(2);
+    expect(ws[0]!.start).toBe(RESET - WEEK_MS);
+    expect(ws[0]!.length_h).toBe(168);
+    // Every reading of the new window lies inside it, so none is dropped from its stats.
+    expect(ws[0]!.points.every((p) => p.t >= ws[0]!.start)).toBe(true);
+    // The old window's reported reset is still ahead, but only the newest window is current.
+    expect(oldReset).toBeGreaterThan(now);
+    expect(ws.map((w) => w.current)).toEqual([true, false]);
   });
 
   it("uses the plan's own window length", () => {

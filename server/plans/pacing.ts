@@ -405,7 +405,8 @@ function median(xs: number[]): number {
 /**
  * Every weekly window in the readings, newest first. `windowMs` is the plan's window length.
  * A window starts `windowMs` before its reset, or at the previous window's reset when that came
- * more than SAME_RESET_MS later (an early reset makes a shorter window).
+ * more than SAME_RESET_MS later and this window has no readings from before it (a shorter
+ * window). Only the newest window can be current.
  */
 export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS): PlanWindow[] {
   const sorted = readings
@@ -426,7 +427,13 @@ export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS
   for (const g of groups) {
     const end = median(g.items.map((x) => x.reset));
     let start = end - windowMs;
-    if (prevEnd !== null && prevEnd > start + SAME_RESET_MS) start = prevEnd;
+    // A reset that follows the previous one too closely: either this window is shorter (its
+    // readings begin after the previous reset) or the previous window was reset early and this
+    // one already has readings from before that reset, so it keeps its full length.
+    if (prevEnd !== null && prevEnd > start + SAME_RESET_MS) {
+      const reads = g.items.map((x) => ms(x.r.read_at)).filter((t) => Number.isFinite(t));
+      if (!reads.length || Math.min(...reads) >= prevEnd - SAME_RESET_MS) start = prevEnd;
+    }
     prevEnd = end;
     const seen = new Set<string>();
     const points: Point[] = [];
@@ -447,7 +454,9 @@ export function planWindows(readings: Reading[], now: number, windowMs = WEEK_MS
     // The newest reading wins; at the same instant the higher one (as pastWeeks does).
     const final = (points[points.length - 1] as Point).used;
     const hit = points.find((p) => p.used >= 100);
-    const current = g.last > now;
+    // Only the newest window can be current (an early reset leaves the one before it with a
+    // reset time still ahead).
+    const current = g === groups[groups.length - 1] && g.last > now;
     const first = (points[0] as Point).t;
     const last = (points[points.length - 1] as Point).t;
     out.push({
