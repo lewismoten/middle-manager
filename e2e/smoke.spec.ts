@@ -1,0 +1,143 @@
+import { expect, test, type Page } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import type { Task } from '../web/src/pages/board-logic.ts';
+import type { ExternalJob } from '../web/src/pages/schedules-logic.ts';
+import type { PlanPace } from '../web/src/plans.ts';
+import type { ConnectionsResponse } from '../web/src/pages/connections-logic.ts';
+import { TABS } from '../web/src/tabs.ts';
+
+const SHOTS = 'test-results/screenshots';
+mkdirSync(SHOTS, { recursive: true });
+
+/** Collects console errors, page errors, failed requests and any request off this origin. */
+function watch(page: Page, origin: string) {
+  const problems: string[] = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') problems.push(`console: ${m.text()}`);
+  });
+  page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+  page.on('requestfailed', (r) => problems.push(`failed: ${r.url()} ${r.failure()?.errorText}`));
+  page.on('response', (r) => {
+    if (r.status() >= 400) problems.push(`HTTP ${r.status()}: ${r.url()}`);
+  });
+  page.on('request', (r) => {
+    if (!r.url().startsWith(origin) && !r.url().startsWith('data:')) {
+      problems.push(`off-origin request: ${r.url()}`);
+    }
+  });
+  return problems;
+}
+
+async function horizontalOverflow(page: Page): Promise<number> {
+  return page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+}
+
+// Pages that are built have their own <page>.smoke.spec.ts.
+const BUILT = new Set(['agents', 'schedules', 'notes', 'connections', 'usage']);
+
+for (const tab of TABS.filter((t) => !BUILT.has(t.id))) {
+  test(`${tab.id} renders without overflow or errors`, async ({ page, baseURL }, info) => {
+    const problems = watch(page, baseURL as string);
+    await page.goto(`/#/${tab.id}`);
+    await expect(page.locator('h1#page-title')).toHaveText(tab.title);
+    await expect(page.locator('#site-name')).toHaveText('Test fleet');
+    await expect(page.locator(`.tabs a[aria-current="page"]`)).toHaveText(tab.label);
+    if (tab.id === 'burndown') {
+      // Populated from e2e/seed.ts: Plan A has a live week, past weeks and a 5-hour window.
+      await expect(page.locator('.weekly svg[role="img"]')).toBeVisible();
+      await expect(page.locator('.weekly .used')).toHaveCount(1);
+      await expect(page.locator('.weekly .even')).toHaveCount(1);
+      await expect(page.locator('.weekly .proj')).toHaveCount(1);
+      // 1 h and 2 h projections: own dash pattern, end tag and a legend toggle each.
+      await expect(page.locator('.weekly .proj-1h .proj-line')).toHaveCount(1);
+      await expect(page.locator('.weekly .proj-2h .proj-line')).toHaveCount(1);
+      await expect(page.locator('.weekly .legend-toggle')).toHaveCount(2);
+      await expect(page.locator('.weekly .summary .short-projections')).toContainText(
+        /Last 2 h: .* · Last 1 h: /,
+      );
+      await expect(page.locator('.weekly .now')).toHaveCount(1);
+      await expect(page.locator('.weekly .target')).toHaveCount(1);
+      await expect(page.locator('.five-hour svg[role="img"]')).toBeVisible();
+      await expect(page.locator('.past-weeks tbody tr')).toHaveCount(2);
+      await expect(page.locator('table.pacing tbody tr')).toHaveCount(3);
+      await expect(page.locator('table.pacing tr[data-plan="plan-b"] .stale')).toBeVisible();
+    } else if (tab.id === 'board') {
+      // Phones show one column at a time; the card is in Doing.
+      if ((page.viewportSize()?.width ?? 0) <= 600)
+        await page.getByLabel('Column', { exact: true }).selectOption('doing');
+      await expect(page.getByRole('button', { name: /Review queue metrics/ })).toBeVisible();
+    } else if (tab.id !== 'overview') {
+      await expect(page.locator('.coming li')).toHaveCount(tab.coming.length);
+      if (tab.id === 'settings')
+        await expect(page.locator('.kv dt', { hasText: 'Size' })).toBeVisible();
+      else await expect(page.locator('.box .box-h', { hasText: 'From your config' })).toBeVisible();
+    }
+    if (tab.id === 'overview') {
+      const [active, tasks, owned, mirror, pace, connections] = await Promise.all(
+        ['/runs?active=1', '/tasks', '/jobs', '/external-jobs', '/plans/pace', '/connections'].map(
+          async (path) => {
+            const response = await page.request.get('/api/v1' + path);
+            expect(response.ok()).toBe(true);
+            return response.json();
+          },
+        ),
+      );
+      const failed =
+        owned.failed_24h +
+        mirror.jobs.filter((j: ExternalJob) => {
+          const age = Date.parse(mirror.now) - Date.parse(j.last_run_at ?? '');
+          return /^(error|fail)/.test(j.last_status ?? '') && age >= 0 && age <= 86400000;
+        }).length;
+      const conn: ConnectionsResponse = connections;
+      const attention =
+        tasks.filter((t: Task) => t.status === 'blocked').length +
+        failed +
+        pace.plans.filter((p: PlanPace) => p.weekly?.stale).length +
+        [...conn.plans, ...conn.local_models].filter((c) => ['warn', 'down'].includes(c.status))
+          .length;
+      const panels = page.locator('.overview-panels');
+      await expect(panels.locator('.overview-count')).toHaveText(
+        [active.runs.length, tasks.length, failed, attention].map(String),
+      );
+      for (const status of ['backlog', 'todo', 'doing', 'review', 'blocked', 'done']) {
+        await expect(panels.getByText(status, { exact: true }).locator('+ dd')).toHaveText(
+          String(tasks.filter((t: Task) => t.status === status).length),
+        );
+      }
+      await expect(page.locator('body')).not.toContainText(
+        /placeholder|nothing here yet|what will appear here|from your config|\bS[345]\b/i,
+      );
+      if (page.viewportSize()?.width === 1440)
+        expect(
+          await page.evaluate(() => document.documentElement.scrollHeight),
+        ).toBeLessThanOrEqual(900);
+      await expect(page.locator('.plan-gauge')).toHaveCount(3);
+      await expect(page.locator('.plan-gauge[data-plan="plan-a"] .mode')).toHaveText(
+        /burn|steady|conserve|stop/,
+      );
+      await expect(page.locator('.plan-gauge[data-plan="plan-a"] svg.gauge')).toBeVisible();
+      await expect(
+        page.locator('.plan-gauge[data-plan="plan-a"] .short-projections'),
+      ).toContainText(/^Last 2 h: (\d+% at reset|runs out .+) · Last 1 h: /);
+      await expect(page.locator('.plan-gauge[data-plan="plan-b"] .stale')).toContainText('stale');
+      await expect(page.locator('.plan-gauge[data-plan="plan-c"]')).toContainText('No readings');
+    }
+
+    const fontsLoaded = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return [...document.fonts]
+        .filter((f) => f.status === 'loaded')
+        .map((f) => f.family.replace(/["']/g, ''));
+    });
+    expect(fontsLoaded).toContain('IBM Plex Sans');
+
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+    await page.screenshot({
+      path: `${SHOTS}/${tab.id}-${info.project.name}.png`,
+      fullPage: tab.id !== 'overview',
+    });
+    expect(problems).toEqual([]);
+  });
+}

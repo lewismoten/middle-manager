@@ -1,0 +1,73 @@
+# middle-manager config. Copy to config/middle-manager.yaml (git-ignored) and edit.
+# Paths may start with ~ (your home folder). Secrets never go here: point at files instead.
+
+site:
+  name: 'My agent fleet'
+  timezone: 'America/New_York' # IANA zone used for schedules and day boundaries
+
+server:
+  host: 0.0.0.0 # listen on all interfaces; use 127.0.0.1 to keep it on this machine
+  port: 4747
+  # cors_origins: ["http://other-host:8080"]   # off by default (same origin only)
+
+database:
+  path: data/middle-manager.db # relative to the folder you start it from
+
+machines: # shown on the Agents page; ids are free text, names are for display
+  - id: server-1
+    name: 'Build server'
+    role: 'agents run here'
+
+plans: # subscriptions to pace
+  - id: claude
+    name: 'Claude plan'
+    provider: anthropic-oauth # reads usage with the login already on this host
+    credentials: ~/.claude/.credentials.json
+    windows: [weekly, five_hour]
+    empty_buffer_hours: 1 # target empty: this long before the reset
+    empty_target_pct: 97 # used % to reach at target empty; the rest is the lead's reserve (50-100)
+    launch_cutoff_min: 30 # no new workers this many minutes before the reset
+    window_hours: 168 # weekly window length, 24 to 744 (default 7 days); past weeks align on it
+  - id: codex
+    name: 'Codex plan'
+    provider: codex-sessions
+    sessions_dir: ~/.codex/sessions
+
+models: # pacing ladder per plan, cheapest first
+  claude: [sonnet, opus]
+  codex: [model-small, model-medium, model-large]
+
+local_models: # OpenAI-compatible or Ollama endpoints (kind: ollama | openai)
+  - { id: ollama, name: 'Ollama', url: 'http://127.0.0.1:11434', kind: ollama }
+
+projects: # git repos agents work on
+  - id: main
+    name: 'Main project'
+    repo: 'https://github.com/owner/repo.git'
+    path: ~/dev/project
+    default_branch: develop
+
+documents: # markdown folders shown on the Notes page; private ones need a token to read
+  - { id: ops-logs, name: 'Ops logs', path: ~/ops-logs, glob: '*.md' }
+  - { id: journal, name: 'Journal', path: ~/notes/journal, glob: '*.md', private: true }
+
+collectors: # importers; each can be scheduled as a job
+  # Map Hermes board directory names to project ids.
+  # - { id: boards, kind: hermes-kanban, path: ~/.hermes/kanban/boards, map: { alpha-board: main } }
+  # Agent collectors run on this host every every_s seconds (default 30); see docs/agents.md.
+  - { id: processes, kind: process-scan, match: ['codex exec', 'claude -p'] }
+  # Existing plan readings (time,source,machine,window,used_pct,resets_at,how); map CSV sources to plan ids.
+  # Run with: middle-manager import old-readings
+  # - { id: old-readings, kind: csv-import, path: ~/plan-usage.csv, map: { claude: claude, codex: codex } }
+  - { id: workers, kind: systemd-workers, prefix: 'worker-' } # systemd-run --user --unit worker-...
+  - { id: tokens, kind: session-tokens } # token totals from Claude Code and Codex session logs
+  # Read-only mirror on the Schedules page (re-read every every_s seconds, default 300).
+  - { id: hermes-cron, kind: hermes-cron, path: ~/.hermes/cron/jobs.json }
+  - { id: timers, kind: systemd-timers, scope: user } # scope: user | system; prefix: [backup-] filters
+
+retention: # keeps the database from growing without bound
+  plan_readings_days: 120
+  runs_days: 90
+  job_runs_per_job: 50
+  job_output_kb: 64
+  events_days: 30 # audit log

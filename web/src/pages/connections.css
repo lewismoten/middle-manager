@@ -1,0 +1,188 @@
+/* Connections page. Uses the shared color tokens from styles.css and chip styles from agents.css. */
+
+.page-head .head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.conn-page {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.conn-page > section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.conn-page h2 {
+  font-size: 15px;
+}
+.conn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.conn-none {
+  margin: 0;
+}
+
+.conn-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.conn-card.is-ok {
+  border-left-color: var(--done);
+}
+.conn-card.is-warn {
+  border-left-color: var(--ask);
+}
+.conn-card.is-down {
+  border-left-color: var(--block);
+}
+.conn-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+.conn-card h3 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.conn-card .conn-status {
+  margin-left: auto;
+}
+.conn-kind {
+  flex-basis: 100%;
+  margin: 0;
+  font: 12px var(--mono);
+  color: var(--muted);
+}
+.conn-summary {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.conn-card h4 {
+  margin: 2px 0 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.chip.st-ask {
+  color: var(--ask);
+  border-color: var(--ask);
+  background: var(--ask-bg);
+}
+
+.conn-checks,
+.conn-readings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.conn-checks li {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.conn-checks .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--muted);
+  vertical-align: 1px;
+}
+.conn-checks .is-ok .dot {
+  background: var(--done);
+}
+.conn-checks .is-warn .dot {
+  background: var(--ask);
+}
+.conn-checks .is-down .dot {
+  background: var(--block);
+}
+.conn-readings li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: baseline;
+}
+.conn-readings .win {
+  font: 600 12px var(--mono);
+  min-width: 5.5em;
+}
+.conn-readings .stale {
+  font: 600 11px var(--mono);
+  color: var(--ask);
+}
+.conn-readings .how {
+  font: 11px var(--mono);
+}
+.conn-path {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.conn-card code,
+.conn-none code {
+  font: 0.9em var(--mono);
+  background: var(--lane);
+  border-radius: 4px;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+.conn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.conn-ok {
+  color: var(--done);
+  font-size: 13px;
+}
+.conn-bad {
+  color: var(--block);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.conn-how {
+  border-top: 1px solid var(--grid);
+  padding-top: 6px;
+  font-size: 13px;
+}
+.conn-how summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  min-height: 24px;
+}
+.conn-how p,
+.conn-how ol {
+  margin: 6px 0;
+}
+.conn-how ol {
+  padding-left: 1.3em;
+  display: grid;
+  gap: 4px;
+}
+.conn-note {
+  color: var(--muted);
+}

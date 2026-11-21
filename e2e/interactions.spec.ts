@@ -1,0 +1,229 @@
+import { expect, test, type Page } from '@playwright/test';
+import { TABS } from '../web/src/tabs.ts';
+import { E2E_TOKEN } from './constants.ts';
+
+async function horizontalOverflow(page: Page): Promise<number> {
+  return page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+}
+
+test.describe('interactions', () => {
+  test('tabs work from the keyboard with visible focus', async ({ page }) => {
+    await page.goto('/#/overview');
+    await expect(page.locator('h1#page-title')).toHaveText('Overview');
+    const board = page.locator('.tabs a', { hasText: 'Board' });
+    await board.focus();
+    const outline = await board.evaluate((el) => getComputedStyle(el).outlineStyle);
+    expect(outline).not.toBe('none');
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#\/board$/);
+    await expect(page.locator('h1#page-title')).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(page.locator('.tabs a').last()).toBeFocused();
+  });
+
+  test('unknown routes fall back to Overview', async ({ page }) => {
+    await page.goto('/#/nowhere');
+    await expect(page).toHaveURL(/#\/overview$/);
+  });
+
+  test('theme toggle cycles auto, light, dark and persists', async ({ page }) => {
+    await page.goto('/#/overview');
+    const toggle = page.locator('#theme-toggle');
+    await expect(toggle).toContainText('Auto');
+    await toggle.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await toggle.click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    expect(bg).toBe('rgb(17, 21, 29)');
+    await toggle.click();
+    await expect(page.locator('html')).not.toHaveAttribute('data-theme', /.+/);
+  });
+
+  test('sign in rejects a bad token, stores a good one, and signs out', async ({ page }) => {
+    await page.goto('/#/settings');
+    await page.locator('#sign-in').click();
+    await page.locator('#token-input').fill('mm_wrong');
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#token-error')).toHaveText(/not valid/);
+    await page.locator('#token-input').fill(E2E_TOKEN);
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#sign-in')).toHaveText('e2e');
+    expect(await page.evaluate(() => localStorage.getItem('mm.token'))).toBe(E2E_TOKEN);
+    await page.reload();
+    await expect(page.locator('#sign-in')).toHaveText('e2e');
+    await page.locator('#sign-in').click();
+    await page.locator('#sign-out').click();
+    await expect(page.locator('#sign-in')).toHaveText('Sign in');
+    expect(await page.evaluate(() => localStorage.getItem('mm.token'))).toBeNull();
+  });
+
+  test('burndown: plan picker, hover read-out and posting a reading', async ({ page, request }) => {
+    await page.goto('/#/burndown');
+    await expect(page.locator('#weekly-title')).toContainText('Plan A');
+    const svg = page.locator('.weekly svg[role="img"]');
+    const box = (await svg.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.45, box.y + box.height / 2);
+    await expect(page.locator('.weekly .chart-tip')).toContainText('% used');
+
+    await page.locator('.plan-picker button', { hasText: 'Plan C' }).click();
+    await expect(page.locator('#weekly-title')).toContainText('Plan C');
+    await expect(page.locator('.weekly')).toContainText('No weekly readings yet');
+    await expect(page.locator('.plan-picker button[aria-pressed="true"]')).toHaveText('Plan C');
+
+    const res = await request.post('/api/v1/plans/plan-c/readings', {
+      headers: { authorization: `Bearer ${E2E_TOKEN}` },
+      data: {
+        used_pct: 50,
+        resets_at: new Date(Date.now() + 48 * 3600_000).toISOString(),
+      },
+    });
+    expect(res.status()).toBe(201);
+    await page.reload();
+    await expect(page.locator('#weekly-title')).toContainText('Plan C');
+    await expect(page.locator('.weekly .mode')).toHaveText('burn');
+    await page.locator('.plan-picker button', { hasText: 'Plan A' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#weekly-title')).toContainText('Plan A');
+  });
+
+  test('no horizontal overflow at 320 px on any tab', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 640 });
+    for (const tab of TABS) {
+      await page.goto(`/#/${tab.id}`);
+      await expect(page.locator('h1#page-title')).toHaveText(tab.title);
+      expect(await horizontalOverflow(page), tab.id).toBeLessThanOrEqual(0);
+    }
+  });
+});
+test('board filters, card history, edits and sprint totals', async ({ page }) => {
+  await page.addInitScript((token) => localStorage.setItem('mm.token', token), E2E_TOKEN);
+  await page.goto('/#/board');
+  await page.getByRole('button', { name: 'Create card' }).click();
+  await page.getByLabel('Title', { exact: true }).fill('Synthetic interaction card');
+  await page.getByLabel('Body', { exact: true }).fill('A **bold** <img src=x> example');
+  await page.getByRole('button', { name: 'Save card' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Card details' });
+  await expect(sheet.locator('strong')).toHaveText('bold');
+  await expect(sheet.locator('img')).toHaveCount(0);
+  await sheet.getByRole('button', { name: 'Edit card' }).click();
+  await sheet.getByLabel('Status').selectOption('blocked');
+  await sheet.getByRole('button', { name: 'Save card' }).click();
+  await expect(sheet.getByText('backlog → blocked')).toBeVisible();
+  await sheet.getByLabel('Local note').fill('Check fixture');
+  await sheet.getByRole('button', { name: 'Add note' }).click();
+  await expect(sheet.getByText('Check fixture')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByLabel('Search cards').fill('queue metrics');
+  await page.getByLabel('Assignee lanes').check();
+  await expect(page.locator('.board-card')).toHaveCount(1);
+  await page.locator('.board-card').click();
+  await expect(sheet.getByRole('button', { name: 'Edit card' })).toHaveCount(0);
+  await sheet.getByLabel('Local note').fill('Imported card note');
+  await sheet.getByRole('button', { name: 'Add note' }).click();
+  await expect(sheet.getByText('Imported card note')).toBeVisible();
+  await page.screenshot({ path: 'test-results/screenshots/board-card.png' });
+  await page.keyboard.press('Escape');
+  await page.getByLabel('Search cards').fill('');
+  await page.getByRole('button', { name: 'Sprint', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Iteration A', exact: true })).toBeVisible();
+  await page.screenshot({ path: 'test-results/screenshots/board-sprint.png' });
+  await page.getByRole('button', { name: 'Velocity' }).click();
+  await expect(page.locator('.velocity-row').filter({ hasText: 'Iteration A' })).toHaveText(
+    'Iteration A1',
+  );
+  await page.screenshot({ path: 'test-results/screenshots/board-velocity.png' });
+});
+
+test('API claim appears in Doing on desktop and mobile', async ({ page, request }) => {
+  const headers = { authorization: 'Bearer ' + E2E_TOKEN };
+  const title = 'Verify agent task claiming';
+  const created = await request.post('/api/v1/tasks', {
+    headers,
+    data: { title, status: 'todo', priority: 0 },
+  });
+  expect(created.status()).toBe(201);
+  const { id } = await created.json();
+  expect((await request.post('/api/v1/tasks/' + id + '/claim', { headers })).status()).toBe(200);
+  for (const [width, scheme] of [
+    [1440, 'light'],
+    [375, 'dark'],
+  ] as const) {
+    await page.setViewportSize({ width, height: width === 375 ? 812 : 900 });
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/#/board');
+    if (width === 375) await page.getByLabel('Column', { exact: true }).selectOption('doing');
+    const card = page
+      .locator('.board-column[data-status="doing"] .board-card')
+      .filter({ hasText: title });
+    await expect(card).toBeInViewport();
+    await page.screenshot({ path: `test-results/mr6/board-${width}-${scheme}.png` });
+  }
+});
+
+test('Burndown shows the same recent rate in its summary and table', async ({ page }) => {
+  await page.route('**/api/v1/plans/pace', async (route) => {
+    const response = await route.fetch();
+    const pace = await response.json();
+    Object.assign(pace.plans[0].weekly, {
+      used_pct: 61,
+      even_pace_pct: 91.4,
+      off_pace_pts: -30.4,
+      rate_basis_h: 3,
+      rate_pct_per_h: 2.286,
+      rate_24h: 0.466,
+      mode: 'steady',
+      projected_pct: 94.1,
+      runs_out_at: null,
+    });
+    await route.fulfill({ response, json: pace });
+  });
+  await page.goto('/#/burndown');
+  const recent = page
+    .locator('.pacing tr[data-plan="plan-a"]')
+    .getByRole('cell', { name: '2.29%/h (last 3 h)', exact: true });
+  await expect(recent).toBeVisible();
+  const summary = page.locator('.weekly .summary');
+  await expect(summary).toContainText(await recent.innerText());
+  await expect(summary).toContainText('Last 24 h: 0.47%/h');
+  await expect(summary).toContainText('Off pace: \u221230.4 pts');
+});
+
+test('Overview summarizes the previous visit once and can be dismissed', async ({ page }) => {
+  await page.goto('/#/overview');
+  const strip = page.getByRole('complementary', { name: 'Since your last visit' });
+  await expect(strip).toHaveCount(0);
+  async function revisit(timestamp: string) {
+    await page.evaluate((value) => localStorage.setItem('mm.lastVisit', value), timestamp);
+    const response = page.waitForResponse((r) => r.url().includes('/api/v1/changes?since='));
+    await page.reload();
+    const { now } = await (await response).json();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('mm.lastVisit'))).toBe(now);
+  }
+  const yesterday = new Date(Date.now() - 86400000).toISOString();
+  await revisit(yesterday);
+  await expect(strip).toContainText('1 job newly failing');
+  await expect(strip).toContainText('Plan B +18%');
+  await expect(page.locator('.plan-gauge').first()).toBeVisible();
+  await page.screenshot({ path: 'test-results/mr20-5/overview.png' });
+  const stored = await page.evaluate(() => localStorage.getItem('mm.lastVisit')!);
+  const next = page.waitForResponse((r) => r.url().includes('/api/v1/changes?since='));
+  await page.reload();
+  const response = await next;
+  expect(new URL(response.url()).searchParams.get('since')).toBe(stored);
+  const { now } = await response.json();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mm.lastVisit'))).toBe(now);
+  await expect(strip).toHaveCount(0);
+  await revisit(new Date().toISOString());
+  await expect(strip).toHaveCount(0);
+  await revisit(new Date(Date.now() - 3600000).toISOString());
+  await expect(strip).toContainText(/runs? finished/);
+  await expect(page.locator('.plan-gauge').first()).toBeVisible();
+  await page.screenshot({ path: 'test-results/mr20-5/recent-runs.png' });
+  await strip.getByRole('button', { name: 'Dismiss visit summary' }).click();
+  await expect(strip).toHaveCount(0);
+});

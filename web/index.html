@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>middle-manager</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script src="/theme-init.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="site">
+      <div class="top">
+        <a class="brand" href="#/overview">
+          <span class="site-name" id="site-name">middle-manager</span>
+          <small>middle-manager</small>
+        </a>
+        <div class="actions">
+          <button type="button" id="theme-toggle" class="ghost"></button>
+          <button type="button" id="sign-in" class="primary">Sign in</button>
+        </div>
+      </div>
+      <nav class="tabs" aria-label="Pages"><ul id="tab-list"></ul></nav>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <dialog id="sign-in-dialog" class="sheet" aria-labelledby="sign-in-title">
+      <form method="dialog" id="sign-in-form" class="body"></form>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

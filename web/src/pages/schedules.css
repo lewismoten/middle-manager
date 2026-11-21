@@ -1,0 +1,333 @@
+/* Schedules page. Uses the shared color tokens from styles.css and the sheet/chip styles from
+   agents.css. */
+
+.page-head .head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+/* One screen: two panels side by side, each list scrolls inside its panel. */
+.sched-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  min-width: 0;
+}
+.sched-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: max(280px, calc(100dvh - 230px));
+}
+.sched-panel > h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 15px;
+  border-bottom: 1px solid var(--line);
+}
+.sched-panel > h2 .count {
+  font: 400 13px var(--mono);
+}
+.sched-panel > h2 .chip.ro {
+  margin-left: auto;
+}
+.sched-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+.sched-empty {
+  padding: 20px 14px;
+  display: grid;
+  gap: 6px;
+}
+.sched-empty p,
+.sched-scroll p.pad {
+  margin: 0;
+}
+.sched-scroll p.pad {
+  padding: 14px;
+}
+
+@media (max-width: 1000px) {
+  .sched-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sched-panel {
+    max-height: max(260px, 70dvh);
+  }
+}
+
+/* Own jobs table */
+table.jobs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.jobs thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.jobs td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--grid);
+  vertical-align: top;
+}
+table.jobs tr.disabled td {
+  color: var(--muted);
+}
+table.jobs td.name {
+  min-width: 0;
+}
+table.jobs td.name .job-open {
+  font: 600 13px var(--font);
+  overflow-wrap: anywhere;
+}
+table.jobs .tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+table.jobs code {
+  font: 12px var(--mono);
+  white-space: nowrap;
+}
+table.jobs td.run-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+.small {
+  display: block;
+  font-size: 11px;
+}
+.last {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+time.rel,
+.dur {
+  font: 12px var(--mono);
+  white-space: nowrap;
+}
+.chip.st-muted {
+  color: var(--muted);
+}
+table.jobs button.run-now {
+  min-height: 30px;
+  padding: 3px 10px;
+  font-size: 13px;
+}
+button.danger {
+  color: var(--block);
+  border-color: var(--block);
+}
+
+@media (max-width: 1000px) {
+  table.jobs,
+  table.jobs tbody,
+  table.jobs tr,
+  table.jobs td {
+    display: block;
+  }
+  table.jobs thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  table.jobs tr.job {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 4px 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--grid);
+  }
+  table.jobs td {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+  }
+  table.jobs td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  table.jobs td.name,
+  table.jobs td.run-cell {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+  table.jobs code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Mirror */
+.ext-group h3 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--lane);
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: baseline;
+}
+.ext-group h3 .muted {
+  font-weight: 400;
+}
+.ext-group h3 .read-at {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+ul.ext-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li.ext {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--grid);
+  display: grid;
+  gap: 3px;
+  font-size: 13px;
+  min-width: 0;
+}
+li.ext.disabled {
+  color: var(--muted);
+}
+.ext-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.ext-name {
+  overflow-wrap: anywhere;
+}
+.ext-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ext-meta code {
+  font: 12px var(--mono);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.ext-cmd {
+  font: 11px var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Detail sheet */
+ul.job-runs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+ul.job-runs summary {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 0;
+}
+pre.job-output {
+  margin-top: 4px;
+}
+
+/* Form */
+form.job-form {
+  overflow-y: auto;
+  max-height: 100%;
+}
+.form-field {
+  display: grid;
+  gap: 3px;
+}
+.form-field[hidden] {
+  display: none;
+}
+.form-field p {
+  margin: 0;
+}
+.job-form select,
+.job-form textarea,
+.job-form input[type='number'] {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-height: 34px;
+  width: 100%;
+  min-width: 0;
+}
+.job-form textarea {
+  font: 13px var(--mono);
+  resize: vertical;
+}
+.job-form .bad {
+  color: var(--block);
+}
+label.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 500;
+}
+.form-field p.small {
+  margin-top: 3px;
+}
+.form-field p code {
+  font-size: 11px;
+  padding: 0 3px;
+}
+.form-field .preview-line {
+  display: block;
+  margin-top: 2px;
+}
+
+.paused-jobs > summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}

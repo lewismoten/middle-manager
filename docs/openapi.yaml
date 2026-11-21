@@ -1,0 +1,1174 @@
+openapi: 3.1.0
+info:
+  title: middle-manager API
+  version: 0.1.0
+  description: Reads are public unless a private document or collection is requested. Every write
+    requires a bearer token with the write scope. Creating, editing, or deleting a shell job also
+    requires jobs:shell. The admin scope satisfies all scope checks. JSON errors contain error.code
+    and error.message.
+servers: [{ url: /api/v1 }]
+components:
+  securitySchemes: { token: { type: http, scheme: bearer } }
+  schemas:
+    ShortProjection:
+      type: object
+      description: >-
+        Projection at the rate over the last 1 or 2 hours of readings. Reported only; the pacing
+        mode keeps using rate_pct_per_h. The rate runs from the reading at or just before
+        now minus the window (the week start at 0% after a reset) to the newest reading, and the
+        readings must cover at least 30 minutes of the window. Otherwise the numbers are null and
+        reason says why.
+      properties:
+        window_h: { type: integer, enum: [1, 2] }
+        rate_pct_per_h: { type: [number, 'null'], minimum: 0 }
+        since: { type: [string, 'null'], description: Older reading the rate starts from }
+        until: { type: [string, 'null'], description: Newest reading the rate ends at }
+        covered_h: { type: number, description: Hours of the window the readings cover }
+        projected_pct: { type: [number, 'null'], description: Used % at the reset, capped at 100 }
+        runs_out_at:
+          type: [string, 'null']
+          description: When the plan reaches 100% at this rate, if before the reset
+        reason:
+          type: [string, 'null']
+          enum: [window_ended, no_recent_readings, short_span, null]
+        reason_text: { type: [string, 'null'] }
+      required:
+        [
+          window_h,
+          rate_pct_per_h,
+          since,
+          until,
+          covered_h,
+          projected_pct,
+          runs_out_at,
+          reason,
+          reason_text,
+        ]
+    TaskFields:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 1 }
+        status: { enum: [backlog, todo, doing, review, blocked, done] }
+        short_name: &text { type: [string, 'null'] }
+        body: *text
+        priority: { type: [integer, 'null'] }
+        project_id: *text
+        sprint: *text
+        assignee: *text
+        lane: *text
+    RunInput:
+      type: object
+      properties:
+        machine_id: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        provider: { type: [string, 'null'] }
+        project_id: { type: [string, 'null'] }
+        origin: { type: [string, 'null'] }
+        branch: { type: [string, 'null'] }
+        worktree: { type: [string, 'null'] }
+        prompt: { type: [string, 'null'] }
+        summary: { type: [string, 'null'] }
+        harness: { type: [string, 'null'] }
+        log_ref: { type: [string, 'null'] }
+        prompt_ref: { type: [string, 'null'] }
+        cost_note: { type: [string, 'null'] }
+        command: { type: [string, 'null'] }
+        pid: { type: [integer, 'null'], minimum: 0 }
+        parent_run_id: { type: [integer, 'null'], minimum: 0 }
+        tokens_in: { type: [integer, 'null'], minimum: 0 }
+        tokens_out: { type: [integer, 'null'], minimum: 0 }
+        tokens_cache_read: { type: [integer, 'null'], minimum: 0 }
+        tokens_cache_write: { type: [integer, 'null'], minimum: 0 }
+        role: { enum: [orchestrator, agent, sub-agent, review] }
+        status:
+          {
+            enum: [running, done, failed, cancelled, ended],
+            description: An ended run vanished with unknown outcome.,
+          }
+        agent_kind: { enum: [claude-code, codex, hermes, local, other] }
+        task_id: { type: [integer, string] }
+        task: { type: [integer, string, 'null'] }
+        started_at: { type: [string, number, 'null'] }
+        ended_at: { type: [string, number, 'null'] }
+        end: { type: boolean }
+        tokens:
+          type: object
+          properties:
+            in: { type: integer }
+            out: { type: integer }
+            cache_read: { type: integer }
+            cache_write: { type: integer }
+      additionalProperties: false
+    Run:
+      type: object
+      properties:
+        id: { type: integer }
+        machine_id: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        project_id: { type: [string, 'null'] }
+        prompt_first_line: { type: [string, 'null'] }
+        agent_kind: { type: string }
+        role: { type: string }
+        pid:
+          {
+            type: [integer, 'null'],
+            description: Process ID on machine_id when known. Read from the active runs list or run detail.,
+          }
+        status:
+          {
+            enum: [running, done, failed, cancelled, ended],
+            description: An ended run vanished with unknown outcome.,
+          }
+        started_at: { type: string }
+        ended_at: { type: [string, 'null'] }
+        duration_s: { type: integer }
+        tokens_total:
+          {
+            type: integer,
+            description: The session-tokens collector reads harness logs. Agents should omit token counts from reports.,
+          }
+    RunDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Run' }
+        - type: object
+          properties:
+            prompt: { type: [string, 'null'] }
+            parent: { anyOf: [{ $ref: '#/components/schemas/Run' }, { type: 'null' }] }
+            children: { type: array, items: { $ref: '#/components/schemas/Run' } }
+    CollectorReport:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        ok: { type: boolean }
+        error: { type: string }
+    PlanWindow:
+      type: object
+      description: One weekly window of a plan and how it ended (so far, for the current one).
+      properties:
+        id: { type: string, description: 'The reset time (median of the readings), ISO.' }
+        current: { type: boolean }
+        start: { type: string }
+        reset_at: { type: string }
+        length_h:
+          type: number
+          description: The plan's window_hours, or less when the previous reset came early.
+        readings: { type: integer }
+        first_reading_at: { type: string }
+        last_reading_at: { type: string }
+        final_pct: { type: number, description: Used % at the newest reading. }
+        peak_pct: { type: number }
+        ran_out: { type: boolean, description: A reading reached 100%. }
+        ran_out_at: { type: [string, 'null'], description: The first reading at 100%. }
+        unused_pct: { type: number, description: '100 - final_pct, or 0 when it ran out.' }
+        unused_h:
+          type: number
+          description: Unused share in hours of even-pace use (unused_pct x length_h / 100).
+        locked_out_h: { type: [number, 'null'], description: Hours from running out to the reset. }
+        target_empty_at: { type: string, description: Reset minus empty_buffer_hours. }
+        target_gap_pct:
+          type: number
+          description: final_pct - 100 (0 when it ran out); negative means left unused.
+        ran_out_early_h:
+          type: [number, 'null']
+          description: Hours it ran out before target_empty_at (negative = after).
+        mean_vs_even_pct:
+          type: [number, 'null']
+          description: Time-weighted mean of used % minus even pace (+ = ahead).
+        mean_abs_vs_even_pct:
+          type: [number, 'null']
+          description: Time-weighted mean distance from even pace; lower is steadier.
+        partial:
+          type: boolean
+          description: Readings start over 6 h after the start or stop over 6 h before the reset.
+    Reading:
+      type: object
+      properties:
+        used_pct: { type: number }
+        window: { enum: [weekly, five_hour] }
+        read_at: { type: string }
+        resets_at: { type: [string, 'null'] }
+        how: { type: string }
+        machine_id: { type: [string, 'null'] }
+        plan_id: { type: string }
+    ReadingInput:
+      type: object
+      properties:
+        used_pct: { type: [number, string], description: Percentage from 0 through 100 }
+        window: { enum: [weekly, five_hour], default: weekly }
+        read_at: { type: [string, 'null'], format: date-time }
+        resets_at: { type: [string, 'null'], format: date-time }
+        machine_id: { type: [string, 'null'] }
+        machine: { type: [string, 'null'] }
+        how: { type: [string, 'null'] }
+      required: [used_pct]
+    Task:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        status: { type: string }
+        short_name: { type: [string, 'null'] }
+        project_id: { type: [string, 'null'] }
+        origin: { type: string }
+        external_ref: { type: [string, 'null'] }
+        claimed_by: { type: [string, 'null'] }
+        body_first_line:
+          { type: [string, 'null'], maxLength: 256, description: List responses only }
+    TaskEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        task_id: { type: integer }
+        at: { type: string }
+        actor: { type: [string, 'null'] }
+        kind: { type: string }
+        data_json: { type: string }
+    Attention:
+      type: [string, 'null']
+      enum: [failed, stuck, overdue, null]
+    Job:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        kind: { type: string }
+        schedule: { type: string }
+        timezone: { type: [string, 'null'] }
+        enabled: { type: boolean }
+        collector_id: { type: [string, 'null'] }
+        command: { type: [string, 'null'] }
+        running: { type: boolean }
+        next_run_at: { type: [string, 'null'] }
+        attention: { $ref: '#/components/schemas/Attention' }
+        failed_24h: { type: integer }
+    JobRun:
+      type: object
+      properties:
+        id: { type: integer }
+        job_id: { type: integer }
+        started_at: { type: string }
+        ended_at: { type: [string, 'null'] }
+        exit_code: { type: [integer, 'null'] }
+        status: { type: string }
+        output: { type: string }
+        truncated: { type: boolean }
+    JobInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 80 }
+        schedule: { type: string, description: Five-field cron or @hourly/@daily/@weekly }
+        timezone: { type: [string, 'null'], description: IANA zone; null uses site.timezone }
+        kind: { enum: [collector, shell] }
+        collector_id: { type: [string, 'null'], description: Collector jobs only }
+        command: { type: [string, 'null'], description: Shell jobs only; run with /bin/sh }
+        enabled: { type: boolean }
+        timeout_s: { type: integer, minimum: 1, maximum: 86400 }
+        notify: { type: [string, 'null'], description: Stored only for now }
+paths:
+  /changes:
+    get:
+      summary: Overview changes strictly after the supplied timestamp
+      parameters:
+        - { name: since, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          {
+            description: 'Runs, moved cards, newly failing schedules and plan usage deltas. Each list includes a total and up to 20 items.',
+          }
+        '400': { description: Missing or invalid timestamp }
+  /tasks:
+    get:
+      summary: List cards matching all supplied filters
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 0, default: 200 } }
+        - { in: query, name: offset, schema: { type: integer, minimum: 0, default: 0 } }
+        - { in: query, name: include_body, schema: { type: string, enum: ['1'] } }
+        - {
+            in: query,
+            name: status,
+            schema: { enum: [backlog, todo, doing, review, blocked, done] },
+          }
+        - { in: query, name: project, schema: { type: string } }
+        - { in: query, name: assignee, schema: { type: string } }
+        - { in: query, name: sprint, schema: { type: string } }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Case-insensitive substring
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '200':
+          description: Matching tasks in descending id order with body_first_line (256 characters maximum); body requires include_body=1
+          content:
+            application/json:
+              { schema: { type: array, items: { $ref: '#/components/schemas/Task' } } }
+    post:
+      summary: Create a local card
+      security: &write [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { allOf: [{ $ref: '#/components/schemas/TaskFields' }, { required: [title] }] }
+      responses:
+        '201':
+          description: Created task
+          content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } }
+  /tasks/{id}:
+    parameters: &taskId [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: Read a task with its chronological events and linked runs
+      responses:
+        '200':
+          description: Task object with events and runs arrays
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Task' }
+                  - type: object
+                    properties:
+                      events: { type: array, items: { $ref: '#/components/schemas/TaskEvent' } }
+                      runs: { type: array, items: { type: object } }
+        '404': { description: Unknown task }
+    patch:
+      summary: Edit fields and record status transitions
+      security: *write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TaskFields' } } }
+      responses:
+        '200':
+          description: Updated task
+          content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } }
+        '409': { description: Imported card }
+  /tasks/next:
+    get:
+      summary: Next eligible local todo card in board order
+      parameters:
+        - { in: query, name: project, schema: { type: string } }
+        - { in: query, name: assignee, schema: { type: string } }
+      responses:
+        '200': { description: Eligible task }
+        '204': { description: Empty queue }
+        '400': { description: Unknown parameter }
+  /tasks/{id}/claim:
+    parameters: *taskId
+    post:
+      summary: Claim a local todo card under the authenticated token name
+      security: *write
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                run_id: { type: integer }
+                assignee: { type: string, description: Must match the token name }
+      responses:
+        '200': { description: Claimed task }
+        '400': { description: Invalid input }
+        '404': { description: Unknown task }
+        '409': { description: Task or run unavailable }
+  /tasks/{id}/events:
+    parameters: *taskId
+    post:
+      summary: Append an event attributed to the token owner
+      security: *write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, data]
+              properties:
+                kind: { type: string, description: Imported cards accept comment or note }
+                data:
+                  type: object
+                  description: Notes require text. Links may supply branch or pr.
+                  properties: { text: { type: string } }
+      responses:
+        '201':
+          description: Appended event
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskEvent' } } }
+  /collectors/{id}/run:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    post:
+      summary: Run any configured collector now (plan, csv-import, hermes-kanban, agent or mirror)
+      security: *write
+      responses:
+        '201':
+          description: '{ id, kind, ok, ...counts } from the collector'
+          content:
+            { application/json: { schema: { $ref: '#/components/schemas/CollectorReport' } } }
+        '404': { description: No plan or collector with this id }
+        '502': { description: The collector ran and failed }
+  # ---- Schedules (S5) ----
+  /jobs:
+    get:
+      summary: middle-manager jobs with next run, last run and failures in 24 h
+      responses:
+        '200':
+          description: '{ now, site_timezone, jobs[], failed_24h, collectors[] }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  site_timezone: { type: string }
+                  jobs: { type: array, items: { $ref: '#/components/schemas/Job' } }
+                  failed_24h: { type: integer }
+                  collectors: { type: array, items: { type: object } }
+    post:
+      summary: Create a job. Shell jobs need the jobs:shell scope.
+      security: [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/JobInput' }
+                - required: [name, schedule]
+                  if: { properties: { kind: { const: shell } }, required: [kind] }
+                  then: { required: [command] }
+                  else: { required: [collector_id] }
+      responses:
+        '201':
+          description: The job
+          content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } }
+        '400': { description: Validation error }
+        '403': { description: Shell job without the jobs:shell scope }
+        '409': { description: Name taken }
+  /jobs/preview:
+    get:
+      summary: Check a schedule and list its next three runs
+      parameters:
+        - { in: query, name: schedule, required: true, schema: { type: string } }
+        - { in: query, name: timezone, schema: { type: string } }
+      responses:
+        '200':
+          description: '{ ok, error?, next[], timezone }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  error: { type: string }
+                  next: { type: array, items: { type: string } }
+                  timezone: { type: string }
+  /jobs/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: One job
+      responses:
+        '200':
+          description: The job
+          content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } }
+        '404': { description: No such job }
+    patch:
+      summary: Edit a job (fields as for POST; omitted fields are kept). Shell jobs need jobs:shell.
+      security: [{ token: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/JobInput' } } }
+      responses:
+        '200':
+          description: The job
+          content: { application/json: { schema: { $ref: '#/components/schemas/Job' } } }
+      description:
+        Editing an existing shell job or converting a collector job to a shell job requires
+        jobs:shell in addition to write, or admin.
+    delete:
+      summary: Delete a job and its runs. Shell jobs need jobs:shell.
+      security: [{ token: [] }]
+      responses:
+        '200':
+          description: '{ deleted: id }'
+          content:
+            application/json:
+              { schema: { type: object, properties: { deleted: { type: integer } } } }
+        '409': { description: The job is running }
+  /jobs/{id}/run:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    post:
+      summary: Run a job now. Answers 202 at once; ?wait=1 waits for the end.
+      security: [{ token: [] }]
+      parameters: [{ in: query, name: wait, schema: { enum: ['1'] } }]
+      responses:
+        '202':
+          description: The started run
+          content: { application/json: { schema: { $ref: '#/components/schemas/JobRun' } } }
+        '200':
+          description: The finished run (with ?wait=1)
+          content: { application/json: { schema: { $ref: '#/components/schemas/JobRun' } } }
+        '409': { description: Already running }
+  /jobs/{id}/runs:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: Newest runs first, with capped output
+      parameters: [{ in: query, name: limit, schema: { type: integer, default: 20 } }]
+      responses:
+        '200':
+          description: '{ job_id, runs[] }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: integer }
+                  runs: { type: array, items: { $ref: '#/components/schemas/JobRun' } }
+  /external-jobs:
+    get:
+      summary: Read-only mirror of Hermes cron and systemd timers, with read time and staleness
+      parameters:
+        - { in: query, name: kind, schema: { enum: [hermes-cron, systemd-timers] } }
+        - {
+            in: query,
+            name: status,
+            schema: { enum: [running, ok, failed, error] },
+            description: Last reported status before any parenthesized detail.,
+          }
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '200':
+          description: '{ now, jobs[] }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  jobs:
+                    type: array
+                    items:
+                      type: object
+                      required: [attention]
+                      properties:
+                        attention: { $ref: '#/components/schemas/Attention' }
+  /external-jobs/refresh:
+    post:
+      summary: Re-read every hermes-cron and systemd-timers collector now
+      security: [{ token: [] }]
+      responses:
+        '200':
+          description: '{ collectors[] } with ok, jobs, removed or error'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  {
+                    collectors:
+                      { type: array, items: { $ref: '#/components/schemas/CollectorReport' } },
+                  }
+  /documents:
+    get:
+      summary: >-
+        Document collections and their documents, newest first. Private collections are listed as
+        locked (no titles or counts) without a token; asking for one directly is a 401. Folders are
+        rescanned on read at most every 30 s.
+      parameters:
+        - { in: query, name: collection, schema: { type: string } }
+        - in: query
+          name: q
+          description: Title or path contains
+          schema: { type: string }
+        - { in: query, name: limit, schema: { type: integer, default: 500, maximum: 2000 } }
+        - { in: query, name: refresh, description: Rescan now, schema: { enum: ['1'] } }
+      responses:
+        '200':
+          description: '{ now, collections[], documents[], total, limit }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  collections: { type: array, items: { type: object } }
+                  documents: { type: array, items: { type: object } }
+                  total: { type: integer }
+                  limit: { type: integer }
+        '401': { description: A private collection was asked for without a token }
+        '404': { description: No such collection }
+      security: [{}, { token: [] }]
+  /documents/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: >-
+        One document read from disk and rendered to safe HTML (raw HTML in the file is shown as
+        text; only http(s) and mailto links). Files over 512 KB are cut and marked truncated.
+      responses:
+        '200':
+          description:
+            '{ id, collection_id, collection_name, path, title, date, mtime, size, private,
+            truncated, html }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  collection_id: { type: string }
+                  collection_name: { type: string }
+                  path: { type: string }
+                  title: { type: string }
+                  html: { type: string }
+                  truncated: { type: boolean }
+        '401': { description: Private document and no token }
+        '404': { description: Unknown id, or the file is gone }
+      security: [{}, { token: [] }]
+  /connections:
+    get:
+      summary: >-
+        Status of each plan source (checked on this host without calling the provider) with its
+        newest readings, and a live check of each local model (cached 15 s). File paths and URLs are
+        included only with a token.
+      parameters:
+        - in: query
+          name: refresh
+          description: Re-check local models now
+          schema: { enum: ['1'] }
+      responses:
+        '200':
+          description: '{ now, stale_after_h, plans[], local_models[] }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  stale_after_h: { type: number }
+                  plans: { type: array, items: { type: object } }
+                  local_models: { type: array, items: { type: object } }
+      security: [{}, { token: [] }]
+  /usage:
+    get:
+      summary: >-
+        Tokens by plan and model per hour and per day, runs started per day by agent kind, and
+        recent cost notes. Built from runs; a run's token totals are spread evenly over the hours it
+        was open. A run counts against the plan named by its provider, else the plan whose model
+        ladder lists its model, else the only plan reading that agent's login.
+      parameters:
+        - in: query
+          name: days
+          schema: { type: integer, default: 14, minimum: 1, maximum: 90 }
+        - in: query
+          name: hours
+          schema: { type: integer, default: 48, minimum: 1, maximum: 168 }
+      responses:
+        '200':
+          description:
+            '{ now, timezone, days, hours, series[], hourly, daily, runs_per_day, cost_notes[],
+            runs_without_tokens }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  timezone: { type: string }
+                  days: { type: integer }
+                  hours: { type: integer }
+                  series: { type: array, items: { type: object } }
+                  hourly: { type: object }
+                  daily: { type: object }
+                  runs_per_day: { type: object }
+                  cost_notes: { type: array, items: { type: object } }
+                  runs_without_tokens: { type: integer }
+        '400': { description: days or hours out of range }
+  /openapi.yaml:
+    get:
+      summary: Download this OpenAPI document
+      responses:
+        '200':
+          description: OpenAPI 3.1 document
+          content: { application/yaml: { schema: { type: string } } }
+  /health:
+    get:
+      summary: Check database availability and service uptime
+      responses:
+        '200':
+          description: Check database availability and service uptime
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  version: { type: string }
+                  time: { type: string }
+                  uptime_s: { type: integer }
+  /stats:
+    get:
+      summary: Read database and retention statistics
+      responses:
+        '200':
+          description: Read database and retention statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  db:
+                    type: object
+                    properties:
+                      size_bytes: { type: integer }
+                      wal_bytes: { type: integer }
+                      page_count: { type: integer }
+                      page_size: { type: integer }
+                      schema_version: { type: integer }
+                      rows: { type: object, additionalProperties: { type: integer } }
+                  retention: { type: object }
+                  last_retention: { type: [object, 'null'] }
+  /config/public:
+    get:
+      summary: Read the public site configuration
+      responses:
+        '200':
+          description: Read the public site configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+                  site:
+                    {
+                      type: object,
+                      properties: { name: { type: string }, timezone: { type: string } },
+                    }
+                  machines:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  plans:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  local_models:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  projects:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  documents:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  collectors:
+                    { type: array, items: { type: object, properties: { id: { type: string } } } }
+                  retention: { type: object }
+  /auth/whoami:
+    get:
+      summary: Read the token name and scopes, or null for an anonymous request
+      security: [{}, { token: [] }]
+      responses:
+        '200':
+          description: Read the token name and scopes, or null for an anonymous request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: [object, 'null']
+                    properties:
+                      { name: { type: string }, scopes: { type: array, items: { type: string } } }
+  /runs:
+    get:
+      summary: List matching runs, newest first
+      parameters:
+        - in: query
+          name: project
+          schema: { type: string }
+          description: Configured project ID
+        - { in: query, name: machine, schema: { type: string } }
+        - { in: query, name: model, schema: { type: string } }
+        - in: query
+          name: task
+          schema: { type: string }
+          description: Task ID, short name, or external reference
+        - { in: query, name: role, schema: { type: string } }
+        - { in: query, name: kind, schema: { type: string } }
+        - {
+            in: query,
+            name: status,
+            schema:
+              {
+                enum: [running, done, failed, cancelled, ended],
+                description: An ended run vanished with unknown outcome.,
+              },
+          }
+        - { in: query, name: parent, schema: { type: integer } }
+        - { in: query, name: active, schema: { enum: ['1', 'true', '0', 'false'] } }
+        - in: query
+          name: finished
+          schema: { enum: ['1', 'true', '0', 'false'] }
+          description: Select closed runs with 1 or true and open runs with 0 or false.
+        - in: query
+          name: finished_within_h
+          schema: { type: number }
+          description: Open runs and runs finished within this many hours. Overrides active.
+        - in: query
+          name: hours
+          schema: { type: number }
+          description: Alias for finished_within_h
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, default: 500 }
+          description: Capped at 2000
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '200':
+          description: List matching runs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  now: { type: string }
+                  runs: { type: array, items: { $ref: '#/components/schemas/Run' } }
+    post:
+      summary: Start a run or merge by machine and PID
+      security: [{ token: [] }]
+      requestBody:
+        { content: { application/json: { schema: { $ref: '#/components/schemas/RunInput' } } } }
+      responses:
+        '200':
+          description: Merged run
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/RunDetail' }
+                  - type: object
+                    properties:
+                      {
+                        merged: { type: boolean },
+                        warnings: { type: array, items: { type: string } },
+                      }
+        '201':
+          description: New run
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/RunDetail' }
+                  - type: object
+                    properties:
+                      {
+                        merged: { type: boolean },
+                        warnings: { type: array, items: { type: string } },
+                      }
+  /runs/{id}:
+    parameters: [{ in: path, name: id, required: true, schema: { type: integer } }]
+    get:
+      summary: Read a run with its parent and children
+      responses:
+        '200':
+          description: Read a run with its parent and children
+          content: { application/json: { schema: { $ref: '#/components/schemas/RunDetail' } } }
+    patch:
+      summary: Update run progress, token totals, or completion
+      security: [{ token: [] }]
+      requestBody:
+        { content: { application/json: { schema: { $ref: '#/components/schemas/RunInput' } } } }
+      responses:
+        '200':
+          description: Updated run
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/RunDetail' }
+                  - {
+                      type: object,
+                      properties: { warnings: { type: array, items: { type: string } } },
+                    }
+  /runs/scan:
+    post:
+      summary: Scan configured agent collectors
+      security: [{ token: [] }]
+      responses:
+        '200':
+          description: Results per collector
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  {
+                    collectors:
+                      { type: array, items: { $ref: '#/components/schemas/CollectorReport' } },
+                  }
+  /plans:
+    get:
+      summary: List plans with latest readings by window and past weeks
+      responses:
+        '200':
+          description: List plans with latest readings by window and past weeks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        provider: { type: string }
+                        windows: { type: array, items: { type: string } }
+                        models: { type: array, items: { type: string } }
+                        readings: { type: integer }
+                        latest: { type: object }
+                        past_weeks: { type: array, items: { type: object } }
+  /plans/pace:
+    get:
+      summary: Read weekly pacing and the latest five-hour reading per plan
+      parameters:
+        - { in: query, name: plan, schema: { type: string }, description: Configured plan ID. }
+        - {
+            in: query,
+            name: model,
+            schema: { type: string },
+            description: Configured model. Returns plans that include it.,
+          }
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '200':
+          description: Read weekly pacing and the latest five-hour reading per plan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated: { type: string }
+                  plans:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        plan: { type: string }
+                        name: { type: string }
+                        provider: { type: string }
+                        empty_buffer_hours: { type: number }
+                        window_hours:
+                          { type: number, description: Length of the weekly window in hours. }
+                        models: { type: array, items: { type: string } }
+                        empty_target_pct:
+                          type: number
+                          description: >-
+                            Used % to reach at target empty (default 97); the rest is a reserve
+                            for the lead and final-hour jobs.
+                        launch_cutoff_min:
+                          type: number
+                          description: No new launches this many minutes before the reset (default 30).
+                        weekly:
+                          type: [object, 'null']
+                          properties:
+                            mode:
+                              type: string
+                              enum: [burn, steady, conserve, finish, stop]
+                              description: >-
+                                finish = final hour (target empty to reset), short jobs only;
+                                stop = no new workers (from the launch cutoff, at 99% used, or at
+                                empty_target_pct before target empty). The lead is never stopped.
+                            phase:
+                              type: string
+                              enum: [week, final, final-hour]
+                              description: >-
+                                week = follow the even-pace line, recovering onto it within 24 h;
+                                final = the last 24 h before target empty, aiming straight at
+                                empty_target_pct; final-hour = target empty to the reset.
+                            used_pct: { type: number }
+                            even_pace_pct:
+                              type: number
+                              description: >-
+                                Even pace now: 0% at the window start to empty_target_pct at
+                                target_empty_at, flat after.
+                            off_pace_pts:
+                              type: number
+                              description: used_pct - even_pace_pct (negative = behind).
+                            empty_target_pct: { type: number }
+                            target_empty_at: { type: string }
+                            launch_cutoff_at:
+                              type: string
+                              description: Reset minus launch_cutoff_min.
+                            need_pct_per_h:
+                              type: number
+                              description: >-
+                                Rate needed: back onto the even-pace line within 24 h (week), or
+                                to empty_target_pct by target empty (final); 0 in the final hour.
+                            projected_pct: { type: number }
+                            reset_at: { type: string }
+                            suggested_model: { type: [string, 'null'] }
+                            stale: { type: boolean }
+                            projection_1h: { $ref: '#/components/schemas/ShortProjection' }
+                            projection_2h: { $ref: '#/components/schemas/ShortProjection' }
+                        five_hour:
+                          { anyOf: [{ $ref: '#/components/schemas/Reading' }, { type: 'null' }] }
+  /plans/{id}/readings:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    get:
+      summary: Read plan readings
+      parameters:
+        - in: query
+          name: since
+          schema: { type: string }
+          description: Earliest reading time
+        - { in: query, name: window, schema: { type: string } }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 10000, default: 5000 }
+          description: The newest this many readings (applied before max_points).
+        - in: query
+          name: reset
+          schema: { type: string }
+          description: >-
+            Only readings of the window resetting at this time (resets_at within 3 hours of it),
+            ISO 8601 with a zone.
+        - in: query
+          name: max_points
+          schema: { type: integer, minimum: 10, maximum: 5000 }
+          description: >-
+            Thin the readings to at most this many for a long chart: the span is cut into equal
+            time buckets, each keeping its highest and its newest reading; the first and last
+            readings are always kept. Leave it out to get every reading.
+      responses:
+        '400': { description: Invalid since, reset or max_points }
+        '200':
+          description: Read plan readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  readings: { type: array, items: { $ref: '#/components/schemas/Reading' } }
+    post:
+      summary: Record a single reading or a batch
+      security: [{ token: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - { $ref: '#/components/schemas/ReadingInput' }
+                - type: object
+                  properties:
+                    readings:
+                      {
+                        type: array,
+                        items: { $ref: '#/components/schemas/ReadingInput' },
+                        maxItems: 500,
+                      }
+                  required: [readings]
+      responses:
+        '201':
+          description: Stored and duplicate counts with submitted readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  readings: { type: array, items: { $ref: '#/components/schemas/Reading' } }
+                  added: { type: integer }
+                  skipped: { type: integer }
+  /plans/{id}/windows:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    get:
+      summary: List a plan's weekly windows (current and past) with how each ended
+      description: >-
+        Readings are grouped into windows by their reported reset time, allowing for jitter
+        (resets within 3 h of each other are the same window). Newest first. Retention
+        (plan_readings_days) limits how far back windows go.
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 52 }
+        - in: query
+          name: current
+          schema: { type: string, enum: ['0', '1'], default: '1' }
+          description: 0 leaves out the current window.
+      responses:
+        '400': { description: Unknown parameter or invalid query value }
+        '404': { description: No such plan }
+        '200':
+          description: The plan's windows, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  window_hours: { type: number }
+                  empty_buffer_hours: { type: number }
+                  windows: { type: array, items: { $ref: '#/components/schemas/PlanWindow' } }
+  /plans/{id}/windows/{window}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string } }
+      - in: path
+        name: window
+        required: true
+        schema: { type: string }
+        description: >-
+          "current", or the window's reset time (its id from the list; any time within 3 h of
+          the reset matches).
+    get:
+      summary: Read one weekly window and its readings
+      responses:
+        '400': { description: The window is not "current" or an ISO time with a zone }
+        '404': { description: No such plan, or no window resets near that time }
+        '200':
+          description: The window and its readings, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plan: { type: string }
+                  window_hours: { type: number }
+                  window: { $ref: '#/components/schemas/PlanWindow' }
+                  readings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        read_at: { type: string }
+                        used_pct: { type: number }
+                        machine_id: { type: [string, 'null'] }
+                        how: { type: [string, 'null'] }
+  /plans/collectors/{id}/run:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+    post:
+      summary: Run a plan collector or CSV import
+      security: [{ token: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                csv: { type: string }
+                map: { type: object, additionalProperties: { type: string } }
+                reading: { $ref: '#/components/schemas/ReadingInput' }
+      responses:
+        '201':
+          description: Collection result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  collector: { type: string }
+                  kind: { type: string }
+                  added: { type: integer }
+                  skipped: { type: integer }
+                  readings: { type: integer }
+                  notes: { type: array, items: { type: string } }
