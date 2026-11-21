@@ -1,10 +1,28 @@
 // Plan pacing data from the API, plus the formatting both plan pages share.
 
 import { api } from './api.ts';
+import type { WindowSummary } from './pages/past-weeks-logic.ts';
 import { h } from './dom.ts';
-import { burnForecast, paceDifference, type Mode, type WeeklyPace } from './plans-logic.ts';
+import {
+  burnForecast,
+  offPace,
+  pct,
+  shortOutcome,
+  shortProjections,
+  type Mode,
+  type WeeklyPace,
+} from './plans-logic.ts';
 
-export { pct, type Mode, type WeeklyPace } from './plans-logic.ts';
+export {
+  pct,
+  signed,
+  shortOutcome,
+  shortProjections,
+  type Mode,
+  type Phase,
+  type ShortProjection,
+  type WeeklyPace,
+} from './plans-logic.ts';
 
 export interface Reading {
   id: number;
@@ -22,6 +40,9 @@ export interface PlanPace {
   name: string;
   provider: string;
   empty_buffer_hours: number;
+  window_hours?: number;
+  empty_target_pct?: number;
+  launch_cutoff_min?: number;
   models: string[];
   weekly: WeeklyPace | null;
   five_hour: Reading | null;
@@ -50,6 +71,20 @@ export interface PlanSummary {
   past_weeks: PastWeek[];
 }
 
+export interface WindowDetail {
+  plan: string;
+  window_hours: number;
+  window: WindowSummary;
+  readings: { read_at: string; used_pct: number; machine_id: string | null; how: string | null }[];
+}
+
+export const getWindows = (id: string) =>
+  api<{ plan: string; window_hours: number; windows: WindowSummary[] }>(
+    `/plans/${encodeURIComponent(id)}/windows`,
+  );
+export const getWindow = (id: string, window: string) =>
+  api<WindowDetail>(`/plans/${encodeURIComponent(id)}/windows/${encodeURIComponent(window)}`);
+
 export const getPace = () => api<PaceResponse>('/plans/pace');
 export const getPlans = () => api<{ plans: PlanSummary[] }>('/plans');
 export const getReadings = (id: string, q: Record<string, string>) =>
@@ -58,10 +93,11 @@ export const getReadings = (id: string, q: Record<string, string>) =>
   );
 
 export const MODE_TEXT: Record<Mode, string> = {
-  burn: 'Burn: use more, the plan will not run out in time',
-  steady: 'Steady: on pace to run out just before the reset',
-  conserve: 'Conserve: slow down, the plan would run out early',
-  stop: 'Stop: nearly spent, finish what is running',
+  burn: 'Burn: use more, the plan will not reach its target in time',
+  steady: 'Steady: on pace to be near empty an hour before the reset',
+  conserve: 'Conserve: slow down, ahead of the even-pace line or the plan would run out early',
+  finish: 'Finish: final hour, short jobs only that end before the reset; the lead keeps running',
+  stop: 'Stop: no new workers (reserve reached or past the launch cutoff); the lead keeps running',
 };
 
 export function modeBadge(mode: Mode): HTMLElement {
@@ -73,14 +109,50 @@ export const rate = (v: number) => `${v.toFixed(2)}%/h`;
 export const recentRateLabel = (w: WeeklyPace) =>
   `${rate(w.rate_pct_per_h)} (last ${w.rate_basis_h} h)`;
 
-export function paceDifferenceLine(w: WeeklyPace): HTMLElement | null {
-  const text = paceDifference(w);
-  return text === null ? null : h('span', { class: 'pace-difference' }, text);
+/** "Off pace: −10.8 pts" against the even-pace line now. */
+export function offPaceLine(w: WeeklyPace): HTMLElement | null {
+  const text = offPace(w);
+  if (text === null) return null;
+  return h(
+    'span',
+    {
+      class: 'off-pace',
+      title: `Used ${pct(w.used_pct, 1)} against even pace ${pct(w.even_pace_pct, 1)} (0% at the window start to ${pct(w.empty_target_pct ?? 97)} at target empty)`,
+    },
+    text,
+  );
 }
 
 export function burnForecastLine(w: WeeklyPace): HTMLElement | null {
   const text = burnForecast(w);
   return text === null ? null : h('span', { class: 'burn-forecast small' }, text);
+}
+
+/**
+ * "Last 2 h: 97% at reset · Last 1 h: runs out Fri 5:10 PM" in the given time zone. Each part's
+ * tooltip gives the rate, or why there is none.
+ */
+export function shortProjectionsLine(w: WeeklyPace, tz?: string): HTMLElement | null {
+  const list = shortProjections(w);
+  if (!list.length) return null;
+  const parts: (HTMLElement | string)[] = [];
+  list.forEach((p, i) => {
+    if (i) parts.push(' · ');
+    parts.push(
+      h(
+        'span',
+        {
+          'data-proj': `${p.window_h}h`,
+          title:
+            p.rate_pct_per_h === null
+              ? (p.reason_text ?? 'not enough readings')
+              : `${rate(p.rate_pct_per_h)} over the last ${p.window_h} h`,
+        },
+        `Last ${p.window_h} h: ${shortOutcome(p, (iso) => fmtTime(iso, tz))}`,
+      ),
+    );
+  });
+  return h('span', { class: 'short-projections small' }, ...parts);
 }
 
 /** "2d 4h", "3h 20m", "12m"; negative spans read "now". */

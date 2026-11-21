@@ -114,23 +114,41 @@ export function insertReadings(db: Db, readings: NewReading[]): { added: number;
   return { added, skipped };
 }
 
+/** Readings whose resets_at is within this of a window's reset belong to that window. */
+const SAME_RESET_MS = 3 * 3600_000;
+
 export function listReadings(
   db: Db,
   planId: string,
-  opts: { since?: string; window?: string; limit?: number } = {},
+  opts: {
+    since?: string;
+    window?: string;
+    limit?: number;
+    /** Only readings of the window resetting at this time (resets_at within 3 h of it). */
+    reset?: number;
+    /** Thin the result to about this many readings (see downsample); never set for zoomed views. */
+    maxPoints?: number;
+  } = {},
 ): StoredReading[] {
   const where = ['plan_id = ?'];
   const args: (string | number)[] = [planId];
-  if (opts.since) {
-    where.push('read_at >= ?');
-    args.push(opts.since);
-  }
   if (opts.window) {
     where.push('"window" = ?');
     args.push(opts.window);
   }
+  if (opts.since) {
+    where.push('read_at >= ?');
+    args.push(opts.since);
+  }
+  if (opts.reset !== undefined) {
+    where.push('resets_at > ? AND resets_at < ?');
+    args.push(
+      new Date(opts.reset - SAME_RESET_MS).toISOString(),
+      new Date(opts.reset + SAME_RESET_MS).toISOString(),
+    );
+  }
   args.push(opts.limit ?? 5000);
-  return db
+  const rows = db
     .prepare(
       `SELECT id, plan_id, "window", used_pct, resets_at, read_at, machine_id, how
          FROM plan_readings WHERE ${where.join(' AND ')}
@@ -138,6 +156,39 @@ export function listReadings(
     )
     .all(...args)
     .reverse() as unknown as StoredReading[];
+  return opts.maxPoints ? downsample(rows, opts.maxPoints) : rows;
+}
+
+/**
+ * Thins readings (oldest first) for a long chart: the span is cut into equal time buckets and
+ * each keeps its highest reading and its newest one, so peaks and the shape survive. The first
+ * and last readings are always kept. At most `max` readings come back (max >= 4).
+ */
+export function downsample<T extends { read_at: string; used_pct: number }>(
+  rows: T[],
+  max: number,
+): T[] {
+  if (rows.length <= max) return rows;
+  const t = rows.map((r) => Date.parse(r.read_at));
+  const t0 = t[0] as number;
+  const span = (t[t.length - 1] as number) - t0;
+  const buckets = Math.max(1, Math.floor((max - 2) / 2));
+  const keep = new Uint8Array(rows.length);
+  keep[0] = 1;
+  keep[rows.length - 1] = 1;
+  let i = 0;
+  for (let b = 0; b < buckets && i < rows.length; b++) {
+    const until = b === buckets - 1 ? Infinity : t0 + (span * (b + 1)) / buckets;
+    let top = -1;
+    let last = -1;
+    for (; i < rows.length && (t[i] as number) < until; i++) {
+      if (top < 0 || (rows[i] as T).used_pct > (rows[top] as T).used_pct) top = i;
+      last = i;
+    }
+    if (top >= 0) keep[top] = 1;
+    if (last >= 0) keep[last] = 1;
+  }
+  return rows.filter((_, k) => keep[k]);
 }
 
 export function latestReading(db: Db, planId: string, window: string): StoredReading | null {

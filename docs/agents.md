@@ -111,6 +111,47 @@ Filters: `active`, `finished` (1 or true for closed runs, 0 or false for open ru
 Unknown query keys and invalid filter values return 400. Task listings accept board statuses
 (backlog, todo, doing, review, blocked, done). Role and kind belong to agent runs.
 Use `/plans/pace?plan=ID&model=MODEL` to select plans by configured ID and model.
+
+The pacing fields in each plan's `weekly` object: `mode` is `burn`, `steady`, `conserve`,
+`finish` (the final hour before the reset: short jobs that end before it only) or `stop` (no new
+workers; it never applies to the lead agent). `phase` is `week` (follow the even-pace line,
+recovering onto it within 24 h), `final` (the last 24 h before `target_empty_at`, aiming straight
+at `empty_target_pct`) or `final-hour`. `even_pace_pct` runs from 0% at the window start to
+`empty_target_pct` (97 by default) at `target_empty_at`; `off_pace_pts` is used minus that.
+Launch nothing new after `launch_cutoff_at`:
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/pace?plan=claude" \
+  | jq '.plans[0].weekly | {mode, phase, off_pace_pts, launch_cutoff_at}'
+# { "mode": "burn", "phase": "week", "off_pace_pts": -10.8, "launch_cutoff_at": "2026-11-20T22:30:00.000Z" }
+```
+
+Each plan's `weekly` object also has `projection_1h` and `projection_2h`: the burn rate over the
+last 1 or 2 hours and where it leads (`projected_pct` at the reset, or `runs_out_at` if sooner).
+They react faster than `rate_pct_per_h` when the burn changes, but the pacing mode and the
+suggested model still use `rate_pct_per_h`. When there are not enough readings (they must cover
+30 minutes of the window), the numbers are null and `reason` is `short_span`,
+`no_recent_readings` or `window_ended`, with `reason_text` explaining it:
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/pace?plan=claude" | jq '.plans[0].weekly.projection_2h'
+# { "window_h": 2, "rate_pct_per_h": 1.42, "projected_pct": 97.3, "runs_out_at": null, ... }
+```
+
+Past weeks: `GET /plans/{id}/windows` lists a plan's weekly windows, newest first (the current
+one first, unless `current=0`; `limit` 1-200, default 52). Each has its start and reset, final
+and peak used %, whether and when it ran out, `unused_h` (what was left, in hours of even-pace
+use), the gap from the target and `mean_abs_vs_even_pct` (how far it strayed from even pace;
+lower is steadier). Readings are grouped by reset time with a 3 h tolerance, because providers
+report the reset with jitter. `GET /plans/{id}/windows/{window}` returns one window and its
+readings; `window` is `current` or the window's `id` (its reset time):
+
+```sh
+curl -fsS "$MM_URL/api/v1/plans/claude/windows?current=0&limit=4" \
+  | jq '.windows[] | {id, final_pct, ran_out_at, unused_h, mean_abs_vs_even_pct}'
+curl -fsS "$MM_URL/api/v1/plans/claude/windows/2026-11-13T23:00:00.000Z" | jq '.readings | length'
+```
+
 External jobs accept `kind` (hermes-cron or systemd-timers) and `status` (running, ok, failed, error).
 
 ## Collectors

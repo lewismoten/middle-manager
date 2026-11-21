@@ -250,7 +250,7 @@ function renderPage(tab: Tab, focus: boolean): void {
     h('div', { class: 'side' }, h('p', { class: 'lead' }, tab.lead), coming, fromConfig(tab)),
   );
   if (tab.id === 'burndown') main.replaceChildren(head, burndownPage(config?.site.timezone));
-  else if (tab.id === 'overview') main.replaceChildren(head, overviewPage());
+  else if (tab.id === 'overview') main.replaceChildren(head, overviewPage(config?.site.timezone));
   else main.replaceChildren(head, empty);
   if (tab.id === 'settings') {
     void settingsLive().then((box) => empty.querySelector('.side')?.append(box));
@@ -262,7 +262,10 @@ function renderPage(tab: Tab, focus: boolean): void {
 function route(focus: boolean): void {
   const tab = tabFromHash(location.hash);
   const want = `#/${tab.id}`;
-  if (location.hash !== want) history.replaceState(null, '', want);
+  // A page may keep its state in a query after the tab (#/burndown?week=...).
+  if (location.hash !== want && !location.hash.startsWith(`${want}?`)) {
+    history.replaceState(null, '', want);
+  }
   renderTabs(tab);
   renderPage(tab, focus);
 }

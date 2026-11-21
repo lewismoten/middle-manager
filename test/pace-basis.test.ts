@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { planPace } from '../server/plans/service.ts';
 import { insertReadings } from '../server/plans/store.ts';
 import { HOUR_MS } from '../server/plans/pacing.ts';
-import { paceDifference } from '../web/src/plans-logic.ts';
+import { offPace, signed } from '../web/src/plans-logic.ts';
 import { memoryDb, testConfig } from './helpers.ts';
 
 it('projects the reviewer example using the same 3 h rate as its steady mode', () => {
@@ -30,23 +30,34 @@ it('projects the reviewer example using the same 3 h rate as its steady mode', (
   const weekly = planPace(db, config, config.plans[0]!, now).weekly!;
   expect(weekly).toMatchObject({
     used_pct: 61,
-    even_pace_pct: 91.4,
+    // Even pace runs to 97% an hour before the reset. In the last 24 h before that the mode aims
+    // straight at 97%: (97 - 61) / 13.47 h = 2.67%/h needed.
+    even_pace_pct: 89.2,
+    off_pace_pts: -28.2,
+    phase: 'final',
     rate_basis_h: 3,
     rate_pct_per_h: 2.286,
     rate_24h: 0.466,
-    ratio: 0.79,
+    ratio: 0.86,
     mode: 'steady',
     projected_pct: 94.1,
     unused_pct: 5.9,
   });
-  expect(paceDifference(weekly)).toBe('3 pts ahead of even pace');
+  expect(offPace(weekly)).toBe('Off pace: \u221228.2 pts');
   db.close();
 });
 
 it.each([
-  [61, '30 pts behind even pace'],
-  [90.5, null],
-  [92.3, null],
-] as const)('describes a projection of %s against 91.4%% even pace', (projected_pct, expected) => {
-  expect(paceDifference({ even_pace_pct: 91.4, projected_pct })).toBe(expected);
+  [-10.8, 'Off pace: \u221210.8 pts'],
+  [3.24, 'Off pace: +3.2 pts'],
+  [-0.04, 'Off pace: 0.0 pts'],
+  [undefined, null],
+] as const)('describes %s points off pace', (off_pace_pts, expected) => {
+  expect(offPace({ off_pace_pts })).toBe(expected);
+});
+
+it('signs numbers with a real minus sign', () => {
+  expect(signed(-2.25)).toBe('\u22122.3');
+  expect(signed(2)).toBe('+2.0');
+  expect(signed(0)).toBe('0.0');
 });

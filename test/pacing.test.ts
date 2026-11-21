@@ -26,7 +26,7 @@ import { memoryDb, testConfig } from './helpers.ts';
 
 const FIX = path.join(import.meta.dirname, 'fixtures');
 const CSV = readFileSync(path.join(FIX, 'plan-readings.csv'), 'utf8');
-const PLANS = ['plan-a', 'plan-b', 'plan-c', 'plan-d', 'plan-e'];
+const PLANS = ['plan-a', 'plan-b', 'plan-c', 'plan-d', 'plan-e', 'plan-f', 'plan-g'];
 
 interface Expected {
   now: string;
@@ -45,6 +45,13 @@ interface Expected {
   need95: number;
   stale_h: number;
   mode: string;
+  phase: string;
+  even_pace: number;
+  even_pace_pct: number;
+  off_pace_pts: number;
+  empty_target_pct: number;
+  target_empty_at: number;
+  launch_cutoff_at: number;
   recent_rate: number;
   rate_basis_h: number;
   need: number;
@@ -92,6 +99,13 @@ function compare(e: Expected) {
   close(a.need95, e.need95);
   close(a.stale_h, e.stale_h);
   expect(p.mode).toBe(e.mode);
+  expect(p.phase).toBe(e.phase);
+  close(p.even_pace, e.even_pace);
+  expect(roundTo(p.even_pace, 1)).toBe(e.even_pace_pct);
+  expect(roundTo(p.off_pace, 1) + 0).toBe(e.off_pace_pts + 0);
+  expect(p.empty_target_pct).toBe(e.empty_target_pct);
+  expect(p.target_empty_at).toBe(e.target_empty_at);
+  expect(p.launch_cutoff_at).toBe(e.launch_cutoff_at);
   close(recent.rate, e.recent_rate);
   expect(p.rate_basis_h).toBe(e.rate_basis_h);
   close(p.need, e.need);
@@ -102,10 +116,11 @@ function compare(e: Expected) {
 }
 
 describe('pacing matches the reference implementation', () => {
-  it('fixture covers every mode and both rate bases', () => {
+  it('fixture covers every mode, phase and both rate bases', () => {
     expect(new Set(EXPECTED.map((e) => e.mode))).toEqual(
-      new Set(['burn', 'steady', 'conserve', 'stop']),
+      new Set(['burn', 'steady', 'conserve', 'finish', 'stop']),
     );
+    expect(new Set(EXPECTED.map((e) => e.phase))).toEqual(new Set(['week', 'final', 'final-hour']));
     expect(new Set(EXPECTED.map((e) => e.rate_basis_h))).toEqual(new Set([3, 24]));
     expect(EXPECTED.some((e) => e.hit !== null)).toBe(true);
     expect(EXPECTED).toHaveLength(NOWS.length * PLANS.length);
@@ -148,6 +163,11 @@ describe('pacing matches the reference implementation', () => {
       const plan = config.plans.find((p) => p.id === e.plan)!;
       const got = planPace(db, config, plan, new Date(e.now).getTime()).weekly!;
       expect(got.mode, `${e.plan} ${e.now}`).toBe(e.mode);
+      expect(got.phase).toBe(e.phase);
+      expect(got.even_pace_pct).toBe(e.even_pace_pct);
+      expect(got.off_pace_pts + 0).toBe(e.off_pace_pts + 0);
+      expect(got.empty_target_pct).toBe(97);
+      expect(Date.parse(got.launch_cutoff_at)).toBe(e.launch_cutoff_at);
       expect(got.rate_pct_per_h).toBe(e.rate_pct_per_h);
       expect(got.need_pct_per_h).toBe(e.need_pct_per_h);
       expect(got.ratio).toBe(e.ratio);
@@ -196,7 +216,7 @@ describe('pacing helpers', () => {
     expect(suggestedModel('burn', [])).toBeNull();
   });
 
-  it('honours empty_buffer_hours for the target', () => {
+  it('respects empty_buffer_hours for the target', () => {
     const { a } = ours('plan-e', NOWS[0] as string);
     const now = new Date(NOWS[0] as string).getTime();
     const one = pace(a, now, 1);
@@ -218,7 +238,8 @@ describe('pacing helpers', () => {
 });
 
 // The live check's driver: loads the reference module, points it at the fixture and prints the
-// same fields as pacing-expected.json.
+// same fields as pacing-expected.json. The unrounded need and even pace come from a second call to
+// the reference pace() with round() shadowed to return its input.
 const DRIVER = String.raw`
 import json, sys, collections
 from datetime import datetime
@@ -229,6 +250,13 @@ b.SOURCES = [csv_path]
 b.LADDER = collections.defaultdict(lambda: collections.defaultdict(str))
 rows = b.load()
 ms = lambda d: d.timestamp() * 1000
+def exact(a, now):
+    # pace() with round() left out, for the unrounded need and even pace.
+    b.round = lambda x, n=None: x
+    try:
+        return b.pace(a, now)
+    finally:
+        del b.round
 out = []
 for now_s in nows:
     now = datetime.fromisoformat(now_s).astimezone(b.ET)
@@ -236,13 +264,16 @@ for now_s in nows:
         w = b.window(rows, src, now)
         a = b.analyse(src, w[0], w[1], now)
         p = b.pace(a, now)
+        x = exact(a, now)
         rr, basis = b.recent_rate(a, now)
-        tgt = a['end'] - b.timedelta(hours=1)
-        need = max(0.0, (100 - a['used']) / max(0.25, (tgt - now).total_seconds() / 3600))
         out.append(dict(now=now_s, plan=src, start=ms(a['start']), end=ms(a['end']), points=len(a['points']),
             used=a['used'], last_t=ms(a['last_t']), pace=a['pace'], rate=a['rate'], since=ms(a['since']),
             left_h=a['left_h'], projected=a['projected'], hit=ms(a['hit']) if a['hit'] else None, need95=a['need'],
-            stale_h=a['stale_h'], mode=p['mode'], recent_rate=rr, rate_basis_h=basis, need=need,
+            stale_h=a['stale_h'], mode=p['mode'], phase=p['phase'], recent_rate=rr, rate_basis_h=basis,
+            need=x['need_pct_per_h'], even_pace=x['even_pace_pct'], even_pace_pct=p['even_pace_pct'],
+            off_pace_pts=p['off_pace_pts'], empty_target_pct=p['empty_target_pct'],
+            target_empty_at=ms(datetime.fromisoformat(p['target_empty_at'])),
+            launch_cutoff_at=ms(datetime.fromisoformat(p['launch_cutoff_at'])),
             rate_pct_per_h=p['rate_pct_per_h'], need_pct_per_h=p['need_pct_per_h'], ratio=p['ratio'],
             reading_age_h=p['reading_age_h']))
 json.dump(out, sys.stdout, indent=1)

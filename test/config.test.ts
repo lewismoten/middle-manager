@@ -89,6 +89,21 @@ describe('config', () => {
     ]);
   });
 
+  it('rejects a window too short to group and a buffer as long as the window', () => {
+    const p = problems({
+      site: { name: 'A' },
+      plans: [
+        { id: 'a', name: 'A', provider: 'manual', window_hours: 3 },
+        { id: 'b', name: 'B', provider: 'manual', window_hours: 48, empty_buffer_hours: 48 },
+        { id: 'c', name: 'C', provider: 'manual', window_hours: 120, empty_buffer_hours: 2 },
+      ],
+    });
+    expect(p).toEqual([
+      'plans[0].window_hours: must be at least 24',
+      'plans[1].empty_buffer_hours: must be less than window_hours',
+    ]);
+  });
+
   it('validates lists, ids and urls', () => {
     const p = problems({
       site: { name: 'A' },

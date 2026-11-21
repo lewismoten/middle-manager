@@ -10,19 +10,20 @@ import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
 import {
   burnForecastLine,
-  paceDifferenceLine,
+  offPaceLine,
   recentRateLabel,
   getPace,
   modeBadge,
   pct,
   readingAge,
   refreshWhileShown,
+  shortProjectionsLine,
   until,
   type PlanPace,
 } from '../plans.ts';
 import './plans.css';
 
-function card(p: PlanPace, now: number): HTMLElement {
+function card(p: PlanPace, now: number, tz?: string): HTMLElement {
   const w = p.weekly;
   const head = h(
     'div',
@@ -61,8 +62,9 @@ function card(p: PlanPace, now: number): HTMLElement {
       projected: w.projected_pct,
       label,
     }),
-    paceDifferenceLine(w),
+    offPaceLine(w),
     burnForecastLine(w),
+    shortProjectionsLine(w, tz),
     h(
       'dl',
       { class: 'pg-kv' },
@@ -126,7 +128,7 @@ async function showVisitChanges(root: HTMLElement) {
   }
 }
 
-export function overviewPage(): HTMLElement {
+export function overviewPage(timeZone?: string): HTMLElement {
   const grid = h('div', { class: 'plan-gauges', 'aria-live': 'polite' });
   const section = h(
     'section',
@@ -196,7 +198,7 @@ export function overviewPage(): HTMLElement {
         grid,
         pace.then(({ plans }) =>
           plans.length
-            ? plans.map((p) => card(p, Date.now()))
+            ? plans.map((p) => card(p, Date.now(), timeZone))
             : [h('p', { class: 'muted' }, 'No plans in the config. Add them under plans:.')],
         ),
       ),

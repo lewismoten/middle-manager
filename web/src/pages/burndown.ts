@@ -1,33 +1,126 @@
-// Burndown: per plan, the weekly chart (readings, even pace, projection, now, target empty),
-// the 5-hour window when the plan reports one, past weeks, and a pacing table for every plan.
+// Burndown: per plan, the weekly chart (readings, even pace, projection, now, target empty), a
+// week picker for past weeks, overlays of other weeks to compare ("Compare with", aligned by
+// time since window start), the 5-hour window when the plan reports one, a past-weeks table and
+// a pacing table for every plan. The picked week and comparison live in the URL
+// (#/burndown?plan=&week=&compare=&avg=); the comparison is also remembered in localStorage.
+// For the current week a view switch zooms into the final stretch: the last 2 h of readings and
+// the next 2 h of projections (view=stretch in the URL, remembered once chosen; it opens by
+// itself when the reset is under 3 h away and no choice has been made).
 
 import { h } from '../dom.ts';
 import { gauge } from '../charts/gauge.ts';
-import { chartLegend, windowChart, type ChartPoint } from '../charts/window-chart.ts';
+import {
+  chartLegend,
+  windowChart,
+  type ChartPoint,
+  type LegendItem,
+  type Overlay,
+} from '../charts/window-chart.ts';
 import {
   burnForecastLine,
-  paceDifferenceLine,
+  offPaceLine,
   recentRateLabel,
   fmtDate,
   fmtTime,
   getPace,
-  getPlans,
   getReadings,
+  getWindow,
+  getWindows,
   modeBadge,
+  MODE_TEXT,
   pct,
   rate,
   readingAge,
+  signed,
   refreshWhileShown,
+  shortOutcome,
+  shortProjections,
+  shortProjectionsLine,
   until,
   type PaceResponse,
   type PlanPace,
-  type PlanSummary,
   type Reading,
+  type WeeklyPace,
+  type WindowDetail,
 } from '../plans.ts';
+import {
+  alignSeries,
+  AVERAGE_DASH,
+  averageSeries,
+  averageWindows,
+  compareWindows,
+  hours,
+  OVERLAY_DASHES,
+  overlayLabel,
+  overlayShortLabel,
+  parseCompare,
+  parseState,
+  PARTIAL_GAP_MS,
+  rangeLabel,
+  stateHash,
+  targetText,
+  type BurndownState,
+  type CompareMode,
+  type SeriesPoint,
+  type Span,
+  type WindowSummary,
+} from './past-weeks-logic.ts';
+import {
+  clipLine,
+  evenLine,
+  parseView,
+  pickView,
+  projectTo,
+  readAgo,
+  stretchRange,
+  stretchStale,
+  valueOn,
+  yZoom,
+  type BurndownView,
+  type SeriesPoint as StretchPoint,
+} from './final-stretch-logic.ts';
 import './plans.css';
 
 const PLAN_KEY = 'mm.burndown.plan';
+const SHORT_KEY = 'mm.burndown.shortProjections';
+
+/** Which 1 h / 2 h projection lines are shown; both by default. */
+function savedShort(): Record<string, boolean> {
+  try {
+    const v = JSON.parse(localStorage.getItem(SHORT_KEY) ?? '{}') as unknown;
+    return v && typeof v === 'object' ? (v as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveShort(key: string, shown: boolean): void {
+  try {
+    localStorage.setItem(SHORT_KEY, JSON.stringify({ ...savedShort(), [key]: shown }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 const HOUR = 3600_000;
+const VIEW_KEY = 'mm.burndown.view';
+/** Readings the week view asks for at most (thinned on the server); the zoomed view gets all. */
+const WEEK_MAX_POINTS = 800;
+
+function savedView(): BurndownView | null {
+  try {
+    return parseView(localStorage.getItem(VIEW_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveView(view: BurndownView): void {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 function savedPlan(): string | null {
   try {
@@ -58,6 +151,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
     'Mode',
     'Used',
     'Even pace',
+    'Off pace',
     'Recent rate',
     'Needed rate',
     'Projected',
@@ -81,7 +175,12 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
       h('th', { scope: 'row' }, p.name),
       h('td', {}, modeBadge(w.mode)),
       h('td', { class: 'num' }, pct(w.used_pct, 1)),
-      h('td', { class: 'num' }, pct(w.even_pace_pct)),
+      h('td', { class: 'num' }, pct(w.even_pace_pct, 1)),
+      h(
+        'td',
+        { class: 'num' },
+        w.off_pace_pts === undefined ? '—' : `${signed(w.off_pace_pts)} pts`,
+      ),
       h('td', { class: 'num' }, recentRateLabel(w)),
       h('td', { class: 'num' }, rate(w.need_pct_per_h)),
       h('td', { class: 'num' }, pct(w.projected_pct), burnForecastLine(w)),
@@ -107,7 +206,7 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
             'tr',
             {},
             ...head.map((x, i) =>
-              h('th', { scope: 'col', class: i >= 2 && i <= 6 ? 'num' : null }, x),
+              h('th', { scope: 'col', class: i >= 2 && i <= 7 ? 'num' : null }, x),
             ),
           ),
         ),
@@ -117,63 +216,8 @@ function pacingTable(pace: PaceResponse, tz: string | undefined, now: number): H
     h(
       'p',
       { class: 'muted small' },
-      'Target: each plan runs out just before its reset (reset minus the buffer). Burn = recent rate under 75% of needed; conserve = over 125%; stop = 97% used. Burn suggests the top model rung, conserve the bottom.',
+      'Target: each plan is near empty (97% by default) at target empty, an hour before its reset; the rest is a reserve for the lead and the final hour. Even pace runs from 0% at the window start to that target. During the week the needed rate gets back onto the even-pace line within 24 h; in the last 24 h it aims straight at the target. Burn = recent rate under 75% of needed; conserve = over 125%, or 5+ points ahead of even pace during the week; finish = the final hour, short jobs only; stop = no new workers from 30 minutes before the reset, at 99% used, or at the target before target empty (the lead keeps running). Burn suggests the top model rung, conserve and finish the bottom.',
     ),
-  );
-}
-
-function pastWeeksBox(plan: PlanSummary | undefined, tz: string | undefined): HTMLElement {
-  const weeks = plan?.past_weeks ?? [];
-  return h(
-    'section',
-    { class: 'box past-weeks', 'aria-labelledby': 'past-title' },
-    h('h2', { id: 'past-title', class: 'box-h' }, 'Past weeks'),
-    weeks.length
-      ? h(
-          'div',
-          { class: 'table-scroll list-scroll', tabindex: '0', 'aria-labelledby': 'past-title' },
-          h(
-            'table',
-            { class: 'data' },
-            h(
-              'thead',
-              {},
-              h(
-                'tr',
-                {},
-                h('th', { scope: 'col' }, 'Reset'),
-                h('th', { scope: 'col', class: 'num' }, 'Used'),
-                h('th', { scope: 'col', class: 'num' }, 'Left unused'),
-              ),
-            ),
-            h(
-              'tbody',
-              {},
-              ...weeks.map((w) =>
-                h(
-                  'tr',
-                  {},
-                  h(
-                    'td',
-                    { title: `Last reading ${fmtDate(w.last_reading_at, tz)}` },
-                    fmtDate(w.reset_at, tz),
-                  ),
-                  h('td', { class: 'num' }, pct(w.used_pct, 1)),
-                  h(
-                    'td',
-                    { class: 'num' },
-                    h('span', {
-                      class: 'unused-bar',
-                      style: `--w:${Math.min(100, w.unused_pct).toFixed(1)}`,
-                    }),
-                    pct(w.unused_pct, 1),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        )
-      : h('p', { class: 'muted' }, 'No finished weeks yet.'),
   );
 }
 
@@ -243,40 +287,362 @@ async function fiveHourBox(
   return box;
 }
 
-async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Promise<HTMLElement> {
-  const w = p.weekly;
-  const box = h('section', { class: 'box weekly', 'aria-labelledby': 'weekly-title' });
-  box.append(
-    h(
-      'div',
-      { class: 'row' },
-      h('h2', { id: 'weekly-title', class: 'box-h' }, `${p.name} · weekly window`),
-      w ? modeBadge(w.mode) : null,
+// ---- Weeks: picking a window, comparing with other weeks, the past-weeks table ----
+
+const COMPARE_KEY = 'mm.burndown.compare';
+
+function savedCompare(): { compare: CompareMode; avg: boolean } {
+  try {
+    const v = JSON.parse(localStorage.getItem(COMPARE_KEY) ?? '{}') as {
+      compare?: string;
+      avg?: boolean;
+    };
+    return { compare: parseCompare(v.compare), avg: v.avg === true };
+  } catch {
+    return { compare: 'none', avg: false };
+  }
+}
+
+function saveCompare(compare: CompareMode, avg: boolean): void {
+  try {
+    localStorage.setItem(COMPARE_KEY, JSON.stringify({ compare, avg }));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Finished windows never change, so their readings are fetched once per page load. */
+const detailCache = new Map<string, Promise<WindowDetail>>();
+
+function windowDetail(plan: string, w: WindowSummary): Promise<WindowDetail> {
+  const key = `${plan}|${w.id}`;
+  if (w.current) return getWindow(plan, w.id);
+  let p = detailCache.get(key);
+  if (!p) {
+    p = getWindow(plan, w.id);
+    p.catch(() => detailCache.delete(key));
+    detailCache.set(key, p);
+  }
+  return p;
+}
+
+/** Legend toggles for overlays (by window id, or "avg"); kept while the page is open. */
+const hiddenOverlays = new Set<string>();
+
+interface WeekView {
+  plan: PlanPace;
+  windows: WindowSummary[];
+  /** The shown window from the list (null for the current week before it is listed). */
+  shown: WindowSummary | null;
+  isCurrent: boolean;
+  state: BurndownState;
+  tz: string | undefined;
+  now: number;
+  /** Week or final-stretch chart for the current week, and why it is the one shown. */
+  view: BurndownView;
+  viewSource: 'url' | 'stored' | 'auto';
+  setView: (view: BurndownView) => void;
+  /** Show a week; `focus` lists selectors to focus after the redraw (first enabled wins). */
+  go: (week: string, focus?: [string, string]) => void;
+  set: (patch: Partial<BurndownState>, focus?: [string, string]) => void;
+}
+
+const toSeries = (rs: { read_at: string; used_pct: number }[]): SeriesPoint[] =>
+  rs.map((r) => ({ t: Date.parse(r.read_at), used: r.used_pct }));
+
+const range = (w: WindowSummary, tz?: string, compact = false) =>
+  rangeLabel(Date.parse(w.start), Date.parse(w.reset_at), tz, compact);
+
+/** Prev / week picker / Next, and "Compare with" + the average toggle. */
+function weekControls(v: WeekView): HTMLElement {
+  const past = v.windows.filter((w) => !w.current);
+  const current = v.windows.find((w) => w.current);
+  const order = ['current', ...past.map((w) => w.id)];
+  const at = Math.max(0, order.indexOf(v.isCurrent ? 'current' : (v.shown?.id ?? 'current')));
+  const older = order[at + 1];
+  const newer = at > 0 ? order[at - 1] : undefined;
+
+  const pick = h(
+    'select',
+    { id: 'week-pick', 'aria-label': 'Week to show' },
+    h('option', { value: 'current' }, current ? `Current (${range(current, v.tz)})` : 'Current'),
+    ...past.map((w) =>
+      h('option', { value: w.id }, `${range(w, v.tz)}${w.partial ? ' (partial)' : ''}`),
     ),
   );
-  if (!w) {
-    box.append(
+  pick.value = order[at] as string;
+  pick.addEventListener('change', () => v.go(pick.value, ['#week-pick', '#week-pick']));
+
+  const prev = h(
+    'button',
+    {
+      type: 'button',
+      class: 'week-prev',
+      disabled: !older,
+      'aria-keyshortcuts': '[',
+      title: 'Previous week ([ key)',
+    },
+    '‹ Prev week',
+  );
+  const next = h(
+    'button',
+    {
+      type: 'button',
+      class: 'week-next',
+      disabled: !newer,
+      'aria-keyshortcuts': ']',
+      title: 'Next week (] key)',
+    },
+    'Next week ›',
+  );
+  prev.addEventListener('click', () => older && v.go(older, ['.week-prev', '.week-next']));
+  next.addEventListener('click', () => newer && v.go(newer, ['.week-next', '.week-prev']));
+
+  const shownId = v.shown?.id ?? (v.isCurrent ? 'current' : '');
+  const choices = v.windows.filter((w) => w.id !== shownId);
+  const olderCount = compareWindows(v.windows, shownId, 'last4').length;
+  const compare = h(
+    'select',
+    { id: 'week-compare' },
+    h('option', { value: 'none' }, 'None'),
+    h('option', { value: 'last', disabled: olderCount < 1 }, 'Last week'),
+    ...[2, 3, 4].map((n) =>
+      h('option', { value: `last${n}`, disabled: olderCount < n }, `Last ${n} weeks`),
+    ),
+    choices.length
+      ? h(
+          'optgroup',
+          { label: 'A chosen week' },
+          ...choices.map((w) =>
+            h(
+              'option',
+              { value: `week:${w.id}` },
+              w.current ? `Current (${range(w, v.tz)})` : range(w, v.tz),
+            ),
+          ),
+        )
+      : null,
+  );
+  compare.value = v.state.compare;
+  if (compare.value !== v.state.compare) compare.value = 'none';
+  compare.addEventListener('change', () =>
+    v.set({ compare: parseCompare(compare.value) }, ['#week-compare', '#week-compare']),
+  );
+
+  const avgAvailable = averageWindows(v.windows, shownId).length >= 2;
+  const avg = h('input', {
+    type: 'checkbox',
+    id: 'week-avg',
+    checked: v.state.avg && avgAvailable,
+    disabled: !avgAvailable,
+  });
+  avg.addEventListener('change', () => v.set({ avg: avg.checked }, ['#week-avg', '#week-avg']));
+
+  const stretch = v.view === 'stretch' && canStretch(v);
+  return h(
+    'div',
+    { class: 'week-controls' },
+    h('div', { class: 'week-nav', role: 'group', 'aria-label': 'Week' }, prev, pick, next),
+    canStretch(v) ? viewSwitch(v) : null,
+    h(
+      'div',
+      { class: 'week-compare', hidden: stretch },
+      h('label', { for: 'week-compare' }, 'Compare with'),
+      compare,
       h(
-        'p',
-        { class: 'muted' },
-        p.provider === 'manual'
-          ? `No weekly readings yet. Post them to /api/v1/plans/${p.plan}/readings or import a CSV.`
-          : `No weekly readings yet. Run: middle-manager import ${p.plan}`,
+        'label',
+        {
+          class: 'check',
+          title: avgAvailable
+            ? 'Average of up to 4 finished weeks before this one'
+            : 'Needs at least 2 finished weeks before this one',
+        },
+        avg,
+        ' Average of past weeks',
       ),
+    ),
+  );
+}
+
+/** The zoomed view is for the current week while its window is still open. */
+const canStretch = (v: WeekView) => v.isCurrent && !!v.plan.weekly?.current;
+
+/** "Week | Last 2 h + next 2 h": two toggle buttons (one pressed). */
+function viewSwitch(v: WeekView): HTMLElement {
+  const button = (view: BurndownView, label: string) => {
+    const b = h(
+      'button',
+      {
+        type: 'button',
+        id: `view-${view}`,
+        class: 'view-btn',
+        'aria-pressed': String(v.view === view),
+      },
+      label,
     );
-    return box;
+    b.addEventListener('click', () => v.setView(view));
+    return b;
+  };
+  return h(
+    'div',
+    { class: 'view-switch', role: 'group', 'aria-label': 'Chart range' },
+    button('week', 'Week'),
+    button('stretch', 'Last 2 h + next 2 h'),
+  );
+}
+
+interface OverlayBuild {
+  overlays: Overlay[];
+  legend: LegendItem[];
+  notes: string[];
+}
+
+/** The overlays for the shown window, aligned onto its time axis. */
+async function buildOverlays(v: WeekView, dst: Span): Promise<OverlayBuild> {
+  const out: OverlayBuild = { overlays: [], legend: [], notes: [] };
+  const empty = () => {
+    if (v.state.compare !== 'none' && !out.overlays.some((o) => o.key !== 'avg')) {
+      out.notes.unshift('No other week to compare with yet.');
+    }
+    return out;
+  };
+  const shownId = v.shown?.id ?? (v.isCurrent ? 'current' : '');
+  const picks = compareWindows(v.windows, shownId, v.state.compare);
+  const avgFrom = v.state.avg ? averageWindows(v.windows, shownId) : [];
+  const need = [...new Map([...picks, ...avgFrom].map((w) => [w.id, w])).values()];
+  const details = new Map<string, WindowDetail>();
+  await Promise.all(
+    need.map(async (w) => {
+      try {
+        details.set(w.id, await windowDetail(v.plan.plan, w));
+      } catch {
+        /* a week that failed to load is left out */
+      }
+    }),
+  );
+  const aligned = (w: WindowSummary) => {
+    const d = details.get(w.id);
+    if (!d) return null;
+    return alignSeries(
+      toSeries(d.readings),
+      { start: Date.parse(w.start), end: Date.parse(w.reset_at) },
+      dst,
+    );
+  };
+  const dstH = (dst.end - dst.start) / 3600_000;
+  picks.forEach((w, i) => {
+    const a = aligned(w);
+    if (!a || !a.points.length) return;
+    const label = overlayLabel(w, v.tz);
+    const name = range(w, v.tz, true);
+    out.overlays.push({
+      key: w.id,
+      label,
+      short: overlayShortLabel(w, v.tz),
+      name,
+      points: a.points,
+      dash: OVERLAY_DASHES[i % OVERLAY_DASHES.length] as string,
+      slot: i,
+    });
+    out.legend.push(overlayLegend(`ov-${i}`, name, w.id));
+    if (a.scaled) {
+      out.notes.push(
+        `${name} was ${Math.round(a.length_h)} h long; it is scaled to this ${Math.round(dstH)} h window by the share of the window gone.`,
+      );
+    }
+    if (!a.fromZero)
+      out.notes.push(
+        `${name} has no readings from its first ${hours((a.points[0]!.t - dst.start) / 3600_000)}.`,
+      );
+  });
+  if (avgFrom.length >= 2) {
+    const series = avgFrom.map(aligned).filter((a): a is NonNullable<typeof a> => !!a);
+    const pts = averageSeries(
+      series.map((a) => a.points),
+      dst,
+    );
+    const last = pts[pts.length - 1];
+    if (last) {
+      out.overlays.push({
+        key: 'avg',
+        label: `Avg of ${series.length} weeks: ${Math.round(last.used)}%`,
+        short: `Avg: ${Math.round(last.used)}%`,
+        name: `Average of ${series.length} weeks`,
+        points: pts,
+        dash: AVERAGE_DASH,
+        slot: 'avg',
+      });
+      out.legend.push(overlayLegend('ov-avg', `Average of ${series.length} past weeks`, 'avg'));
+      if (series.some((a) => a.scaled) && !out.notes.some((n) => n.includes('scaled'))) {
+        out.notes.push('Weeks of a different length are scaled by the share of the window gone.');
+      }
+    }
   }
+  return empty();
+}
+
+function overlayLegend(cls: string, label: string, key: string): LegendItem {
+  return {
+    cls,
+    label,
+    toggle: {
+      pressed: !hiddenOverlays.has(key),
+      onToggle: (on) => {
+        if (on) hiddenOverlays.delete(key);
+        else hiddenOverlays.add(key);
+        document
+          .querySelectorAll(`.weekly [data-overlay="${CSS.escape(key)}"]`)
+          .forEach((el) => el.classList.toggle('ov-hidden', !on));
+      },
+    },
+  };
+}
+
+function weeklyHeader(v: WeekView): HTMLElement {
+  const w = v.plan.weekly;
+  return h(
+    'div',
+    { class: 'row' },
+    h(
+      'h2',
+      { id: 'weekly-title', class: 'box-h' },
+      v.isCurrent
+        ? `${v.plan.name} · weekly window`
+        : `${v.plan.name} · week of ${range(v.shown as WindowSummary, v.tz)}`,
+    ),
+    v.isCurrent ? (w ? modeBadge(w.mode) : null) : h('span', { class: 'past-badge' }, 'past week'),
+  );
+}
+
+async function currentWeekly(v: WeekView, box: HTMLElement): Promise<void> {
+  if (v.view === 'stretch' && canStretch(v)) return stretchWeekly(v, box);
+  const p = v.plan;
+  const w = p.weekly as WeeklyPace;
+  const { tz, now } = v;
   const start = new Date(w.start).getTime();
   const end = new Date(w.reset_at).getTime();
-  const rs = await getReadings(p.plan, {
-    window: 'weekly',
-    since: new Date(start - 3 * HOUR).toISOString(),
-  });
+  const [rs, ov] = await Promise.all([
+    getReadings(p.plan, {
+      window: 'weekly',
+      since: new Date(start - 3 * HOUR).toISOString(),
+      reset: w.reset_at,
+      limit: '10000',
+      // A week of 5-minute readings is thousands of points; the chart is a few hundred px wide.
+      max_points: String(WEEK_MAX_POINTS),
+    }),
+    buildOverlays(v, { start, end }),
+  ]);
   const pts = toPoints(
     rs.readings.filter(
       (x) => x.resets_at && Math.abs(new Date(x.resets_at).getTime() - end) < 3 * HOUR,
     ),
   );
+  const shorts = shortProjections(w);
+  const shown = savedShort();
+  for (const sp of shorts) {
+    const key = `${sp.window_h}h`;
+    if (shown[key] === false) box.classList.add(`hide-proj-${key}`);
+  }
   box.append(
     h(
       'p',
@@ -294,18 +660,35 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
         { title: `Since ${fmtDate(w.rate_24h_since, tz)}` },
         ` · Last 24 h: ${rate(w.rate_24h)}.`,
       ),
-      paceDifferenceLine(w),
+      offPaceLine(w),
       burnForecastLine(w),
+      shortProjectionsLine(w, tz),
     ),
     chartLegend([
       { cls: 'used', label: 'Readings' },
       { cls: 'even', label: 'Even pace' },
       { cls: 'proj', label: `Projection (last ${w.rate_basis_h} h)` },
+      ...shorts.map((sp) => {
+        const key = `${sp.window_h}h`;
+        return {
+          cls: `proj-${key}`,
+          label: `Last ${sp.window_h} h rate`,
+          toggle: {
+            pressed: shown[key] !== false,
+            onToggle: (on: boolean) => {
+              box.classList.toggle(`hide-proj-${key}`, !on);
+              saveShort(key, on);
+            },
+          },
+        };
+      }),
       { cls: 'target', label: `Target empty (${p.empty_buffer_hours} h before reset)` },
+      { cls: 'reserve', label: `Reserve (${pct(targetPctOf(p))}–100%)` },
       { cls: 'now', label: 'Now' },
+      ...ov.legend,
     ]),
     windowChart({
-      label: `${p.name} weekly burndown: ${pct(w.used_pct)} used, even pace ${pct(w.even_pace_pct)}, projected ${pct(w.projected_pct)} at reset`,
+      label: `${p.name} weekly burndown: ${pct(w.used_pct)} used, even pace ${pct(w.even_pace_pct)}, projected ${pct(w.projected_pct)} at reset${ov.overlays.length ? `, compared with ${ov.overlays.map((o) => o.label).join(', ')}` : ''}`,
       start,
       end,
       now,
@@ -314,13 +697,492 @@ async function weeklyBox(p: PlanPace, tz: string | undefined, now: number): Prom
         t: w.runs_out_at ? Date.parse(w.runs_out_at) : end,
         used: w.projected_pct,
         runsOut: w.runs_out_at !== null,
+        readout: `Projection (last ${w.rate_basis_h} h): ${w.runs_out_at ? `runs out ${fmtTime(w.runs_out_at, tz)}` : `${pct(w.projected_pct)} at reset`}`,
       },
+      shortProjections: shorts
+        .filter((sp) => sp.projected_pct !== null)
+        .map((sp) => ({
+          key: `${sp.window_h}h`,
+          tag: `${sp.window_h} h`,
+          t: sp.runs_out_at ? Date.parse(sp.runs_out_at) : end,
+          used: sp.runs_out_at ? 100 : (sp.projected_pct as number),
+          runsOut: sp.runs_out_at !== null,
+          readout: `Last ${sp.window_h} h: ${shortOutcome(sp, (iso) => fmtTime(iso, tz))}`,
+        })),
       targetEmpty: new Date(w.target_empty_at).getTime(),
+      targetPct: targetPctOf(p),
+      reserve: true,
+      overlays: ov.overlays,
+      hidden: hiddenOverlays,
       ticks: 'day',
       timeZone: tz,
     }),
+    ...overlayNotes(ov.notes),
   );
+}
+
+/** The plan's target at target empty (97% unless configured). */
+const targetPctOf = (p: PlanPace) => p.weekly?.empty_target_pct ?? p.empty_target_pct ?? 97;
+
+interface StretchLine {
+  key: string;
+  name: string;
+  rate: number;
+}
+
+/**
+ * The final stretch: readings over the last 2 h and projections over the next 2 h (clipped to
+ * the window), on a y axis fitted to what is shown, with a readout of the newest reading and
+ * where each projection lands at target empty and at the reset.
+ */
+async function stretchWeekly(v: WeekView, box: HTMLElement): Promise<void> {
+  const p = v.plan;
+  const w = p.weekly as WeeklyPace;
+  const { tz, now } = v;
+  const start = Date.parse(w.start);
+  const end = Date.parse(w.reset_at);
+  const target = Date.parse(w.target_empty_at);
+  const targetPct = targetPctOf(p);
+  const cutoff = w.launch_cutoff_at
+    ? Date.parse(w.launch_cutoff_at)
+    : end - (p.launch_cutoff_min ?? 30) * 60_000;
+  const span = stretchRange(now, start, end);
+  // Every reading (never thinned) from a little before the range, for the line's entry point.
+  const rs = await getReadings(p.plan, {
+    window: 'weekly',
+    since: new Date(span.from - 3 * HOUR).toISOString(),
+    reset: w.reset_at,
+    limit: '10000',
+  });
+  const all = toPoints(
+    rs.readings.filter((x) => x.resets_at && Math.abs(Date.parse(x.resets_at) - end) < 3 * HOUR),
+  ).sort((a, b) => a.t - b.t);
+  const shownPts = all.filter((q) => q.t >= span.from && q.t <= span.to);
+  const base: StretchPoint[] = all.some((q) => q.t <= start)
+    ? all
+    : [{ t: start, used: 0 }, ...all];
+  const line = clipLine(base, span);
+  const even = evenLine(start, target, end, targetPct);
+  const used = w.used_pct;
+
+  const lines: StretchLine[] = [
+    { key: 'main', name: `Last ${w.rate_basis_h} h (mode)`, rate: w.rate_pct_per_h },
+    ...shortProjections(w)
+      .filter((sp) => sp.rate_pct_per_h !== null)
+      .map((sp) => ({
+        key: `${sp.window_h}h`,
+        name: `Last ${sp.window_h} h`,
+        rate: sp.rate_pct_per_h as number,
+      })),
+  ];
+  const ends = new Map(lines.map((l) => [l.key, projectTo(used, l.rate, now, span.to)]));
+  const yz = yZoom([
+    ...shownPts.map((q) => q.used),
+    ...line.map((q) => q.used),
+    ...[span.from, span.to, target]
+      .filter((t) => t >= span.from && t <= span.to)
+      .map((t) => valueOn(even, t) ?? NaN),
+    ...[...ends.values()].map((e) => e.used),
+    used,
+  ]);
+
+  const time = (t: number) => fmtTime(new Date(t).toISOString(), tz);
+  /** "10:41 PM": the zoomed view spans hours, so the weekday is left out. */
+  const clock = (t: number) =>
+    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: tz }).format(
+      new Date(t),
+    );
+  const at = (l: StretchLine, t: number) => {
+    if (t < now) return 'passed';
+    const e = projectTo(used, l.rate, now, t);
+    return e.runsOut && e.t < t ? `runs out ${time(e.t)}` : pct(e.used, 1);
+  };
+  const age = now - Date.parse(w.last_reading_at);
+  const stale = stretchStale(age);
+  const shown = savedShort();
+  for (const l of lines)
+    if (l.key !== 'main' && shown[l.key] === false) box.classList.add(`hide-proj-${l.key}`);
+  const axisText = yz.zoomed
+    ? `Y axis zoomed to ${yz.lo}–${yz.hi}% used (not from 0%), so small slopes show.`
+    : 'Y axis 0–100% used.';
+
+  box.append(
+    h(
+      'div',
+      { class: 'stretch-readout' },
+      h(
+        'p',
+        { class: 'stretch-reading' },
+        `Last reading ${time(Date.parse(w.last_reading_at))} · ${readAgo(age)}`,
+        stale
+          ? h(
+              'span',
+              {
+                class: 'stale-badge',
+                title: 'The newest reading is over 15 minutes old; the collectors run every 5.',
+              },
+              h('span', { 'aria-hidden': 'true' }, '⚠ '),
+              `Reading ${Math.round(age / 60_000)} min old`,
+            )
+          : null,
+        ' · Used ',
+        h('b', {}, pct(used, 1)),
+        offPaceLine(w) ? ' · ' : '',
+        offPaceLine(w),
+        ' · ',
+        h('span', { title: MODE_TEXT[w.mode] }, `Mode ${w.mode}`),
+      ),
+      h(
+        'p',
+        { class: 'stretch-rates small' },
+        lines
+          .map((l) => `${l.name}: ${rate(l.rate)}`)
+          .concat(
+            shortProjections(w)
+              .filter((sp) => sp.rate_pct_per_h === null)
+              .map((sp) => `Last ${sp.window_h} h: ${sp.reason_text ?? 'not enough readings'}`),
+          )
+          .join(' · '),
+      ),
+      h(
+        'div',
+        { class: 'table-scroll' },
+        h(
+          'table',
+          { class: 'data stretch-table' },
+          h(
+            'thead',
+            {},
+            h(
+              'tr',
+              {},
+              h('th', { scope: 'col' }, 'Projection'),
+              h(
+                'th',
+                { scope: 'col', class: 'num' },
+                'At target empty ',
+                h('span', { class: 'when' }, clock(target)),
+              ),
+              h(
+                'th',
+                { scope: 'col', class: 'num' },
+                'At reset ',
+                h('span', { class: 'when' }, clock(end)),
+              ),
+            ),
+          ),
+          h(
+            'tbody',
+            {},
+            ...lines.map((l) =>
+              h(
+                'tr',
+                { 'data-line': l.key },
+                h('th', { scope: 'row' }, l.name),
+                h('td', { class: 'num' }, at(l, target)),
+                h('td', { class: 'num' }, at(l, end)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+    chartLegend([
+      { cls: 'used', label: 'Readings' },
+      { cls: 'even', label: `Even pace (to ${pct(targetPct)})` },
+      { cls: 'proj', label: `Projection (last ${w.rate_basis_h} h)` },
+      ...lines
+        .filter((l) => l.key !== 'main')
+        .map((l) => ({
+          cls: `proj-${l.key}`,
+          label: `${l.name} rate`,
+          toggle: {
+            pressed: shown[l.key] !== false,
+            onToggle: (on: boolean) => {
+              box.classList.toggle(`hide-proj-${l.key}`, !on);
+              saveShort(l.key, on);
+            },
+          },
+        })),
+      { cls: 'target', label: 'Target empty' },
+      { cls: 'reserve', label: `Reserve (${pct(targetPct)}–100%)` },
+      { cls: 'cutoff', label: 'Launch cutoff' },
+      { cls: 'now', label: 'Now' },
+    ]),
+    h('p', { class: `axis-note small${yz.zoomed ? ' zoomed' : ''}` }, axisText),
+    windowChart({
+      label: `${p.name}, last 2 h and next 2 h: ${pct(used, 1)} used at ${time(Date.parse(w.last_reading_at))}. ${axisText}`,
+      start,
+      end,
+      now,
+      view: span,
+      y: yz,
+      points: shownPts,
+      linePoints: line,
+      dots: true,
+      projection: projectionEnd(lines[0] as StretchLine, ends, tz),
+      shortProjections: lines.slice(1).map((l) => {
+        const e = ends.get(l.key) as ReturnType<typeof projectTo>;
+        return {
+          key: l.key,
+          tag: l.key.replace('h', ' h'),
+          t: e.t,
+          used: e.used,
+          runsOut: e.runsOut,
+          readout: `${l.name}: ${e.runsOut ? `runs out ${time(e.t)}` : `${pct(e.used, 1)} at ${time(e.t)}`}`,
+        };
+      }),
+      targetEmpty: target,
+      targetPct,
+      reserve: true,
+      launchCutoff: cutoff,
+      resetLine: true,
+      ticks: 'quarter',
+      timeZone: tz,
+      height: 280,
+    }),
+  );
+  if (v.viewSource === 'auto') {
+    box.append(
+      h(
+        'p',
+        { class: 'muted small auto-note' },
+        'Zoomed in because the reset is under 3 h away. Pick Week above to see the whole week.',
+      ),
+    );
+  }
+}
+
+function projectionEnd(
+  l: StretchLine,
+  ends: Map<string, ReturnType<typeof projectTo>>,
+  tz: string | undefined,
+) {
+  const e = ends.get(l.key) as ReturnType<typeof projectTo>;
+  const when = fmtTime(new Date(e.t).toISOString(), tz);
+  return {
+    t: e.t,
+    used: e.used,
+    runsOut: e.runsOut,
+    readout: `${l.name}: ${e.runsOut ? `runs out ${when}` : `${pct(e.used, 1)} at ${when}`}`,
+  };
+}
+
+/** "On target." / "7 pts unused against the target (empty 1 h before the reset)." */
+function targetSentence(w: WindowSummary, bufferH: number): string {
+  const text = targetText(w);
+  if (text === 'on target') return `On target (empty ${bufferH} h before the reset).`;
+  return `${text[0]?.toUpperCase()}${text.slice(1)} against the target (empty ${bufferH} h before the reset).`;
+}
+
+function overlayNotes(notes: string[]): HTMLElement[] {
+  return notes.length ? [h('p', { class: 'muted small overlay-note' }, notes.join(' '))] : [];
+}
+
+async function pastWeekly(v: WeekView, box: HTMLElement): Promise<void> {
+  const w = v.shown as WindowSummary;
+  const { tz } = v;
+  const start = Date.parse(w.start);
+  const end = Date.parse(w.reset_at);
+  const [detail, ov] = await Promise.all([
+    windowDetail(v.plan.plan, w),
+    buildOverlays(v, { start, end }),
+  ]);
+  const pts: ChartPoint[] = detail.readings.map((r) => ({
+    t: Date.parse(r.read_at),
+    used: r.used_pct,
+    note: [r.machine_id, r.how].filter(Boolean).join(' · '),
+  }));
+  const fromZero = Date.parse(w.first_reading_at) - start <= PARTIAL_GAP_MS;
+  const ranOut = w.ran_out_at ? Date.parse(w.ran_out_at) : undefined;
+  box.append(
+    h(
+      'p',
+      { class: 'summary' },
+      `Ended at `,
+      h('b', {}, pct(w.final_pct, 1)),
+      w.peak_pct > w.final_pct ? ` (peak ${pct(w.peak_pct, 1)})` : '',
+      w.ran_out && w.ran_out_at
+        ? h(
+            'span',
+            { class: 'warn' },
+            ` Ran out ${fmtTime(w.ran_out_at, tz)}, ${hours(w.locked_out_h ?? 0)} before the reset.`,
+          )
+        : `, ${pct(w.unused_pct, 1)} left unused at the reset (about ${hours(w.unused_h)} of even-pace use).`,
+      ` ${targetSentence(w, v.plan.empty_buffer_hours)}`,
+      ` Reset ${fmtDate(w.reset_at, tz)} · ${w.readings} readings`,
+      w.partial
+        ? h(
+            'span',
+            { class: 'partial' },
+            ` · partial: readings ${fmtDate(w.first_reading_at, tz)} to ${fmtDate(w.last_reading_at, tz)}`,
+          )
+        : '',
+      '.',
+    ),
+    chartLegend([
+      { cls: 'used', label: 'Readings' },
+      { cls: 'even', label: 'Even pace' },
+      { cls: 'final', label: 'Final value' },
+      ...(ranOut !== undefined ? [{ cls: 'ran-out', label: 'Ran out' }] : []),
+      { cls: 'target', label: `Target empty (${v.plan.empty_buffer_hours} h before reset)` },
+      ...ov.legend,
+    ]),
+    windowChart({
+      label: `${v.plan.name} week of ${range(w, tz)}: ended at ${pct(w.final_pct)}${w.ran_out && w.ran_out_at ? `, ran out ${fmtTime(w.ran_out_at, tz)}` : ''}${ov.overlays.length ? `, compared with ${ov.overlays.map((o) => o.label).join(', ')}` : ''}`,
+      start,
+      end,
+      // A finished week has no "now" line and no projections.
+      now: end + HOUR,
+      points: pts,
+      fromZero,
+      final: { t: Date.parse(w.last_reading_at), used: w.final_pct },
+      ranOut,
+      targetEmpty: Date.parse(w.target_empty_at),
+      targetPct: targetPctOf(v.plan),
+      reserve: true,
+      overlays: ov.overlays,
+      hidden: hiddenOverlays,
+      ticks: 'day',
+      timeZone: tz,
+    }),
+    ...overlayNotes(ov.notes),
+  );
+}
+
+async function weeklyBox(v: WeekView): Promise<HTMLElement> {
+  const p = v.plan;
+  const box = h('section', { class: 'box weekly', 'aria-labelledby': 'weekly-title' });
+  box.append(weeklyHeader(v));
+  if (!p.weekly && !v.windows.length) {
+    box.append(
+      h(
+        'p',
+        { class: 'muted' },
+        p.provider === 'manual'
+          ? `No weekly readings yet. Post them to /api/v1/plans/${p.plan}/readings or import a CSV.`
+          : `No weekly readings yet. Run: middle-manager import ${p.plan}`,
+      ),
+    );
+    return box;
+  }
+  box.append(weekControls(v));
+  if (v.isCurrent) {
+    if (p.weekly) await currentWeekly(v, box);
+    else box.append(h('p', { class: 'muted' }, 'No reading in the current week yet.'));
+  } else await pastWeekly(v, box);
   return box;
+}
+
+/** Finished weeks, newest first: did each run out, how much was left, how close to the target. */
+function pastWeeksTable(v: WeekView): HTMLElement {
+  const weeks = v.windows.filter((w) => !w.current);
+  const { tz } = v;
+  return h(
+    'section',
+    { class: 'box past-weeks', 'aria-labelledby': 'past-title' },
+    h('h2', { id: 'past-title', class: 'box-h' }, 'Past weeks'),
+    weeks.length
+      ? h(
+          'div',
+          { class: 'table-scroll list-scroll', tabindex: '0', 'aria-labelledby': 'past-title' },
+          h(
+            'table',
+            { class: 'data' },
+            h(
+              'thead',
+              {},
+              h(
+                'tr',
+                {},
+                h('th', { scope: 'col' }, 'Week'),
+                h('th', { scope: 'col', class: 'num' }, 'Final'),
+                h('th', { scope: 'col' }, 'Ran out'),
+                h('th', { scope: 'col', class: 'num' }, 'Unused at reset'),
+                h('th', { scope: 'col' }, 'vs target'),
+                h(
+                  'th',
+                  {
+                    scope: 'col',
+                    class: 'num',
+                    title:
+                      'Average distance from the even-pace line over the week (lower is steadier)',
+                  },
+                  'Off even pace',
+                ),
+                h('th', { scope: 'col', class: 'num' }, 'Readings'),
+              ),
+            ),
+            h(
+              'tbody',
+              {},
+              ...weeks.map((w) => {
+                const b = h('button', { type: 'button', class: 'linkish' }, range(w, tz));
+                b.addEventListener('click', () => v.go(w.id, ['#week-pick', '#week-pick']));
+                const shown = !v.isCurrent && v.shown?.id === w.id;
+                return h(
+                  'tr',
+                  { 'data-week': w.id, 'aria-current': shown ? 'true' : null },
+                  h(
+                    'td',
+                    { title: `Reset ${fmtDate(w.reset_at, tz)}` },
+                    b,
+                    w.partial ? h('span', { class: 'muted small' }, ' partial') : '',
+                  ),
+                  h('td', { class: 'num' }, pct(w.final_pct, 1)),
+                  h(
+                    'td',
+                    {},
+                    w.ran_out && w.ran_out_at
+                      ? h('span', { class: 'warn' }, `Yes, ${fmtTime(w.ran_out_at, tz)}`)
+                      : 'No',
+                  ),
+                  h(
+                    'td',
+                    { class: 'num', title: `${pct(w.unused_pct, 1)} of the allowance` },
+                    h('span', {
+                      class: 'unused-bar',
+                      style: `--w:${Math.min(100, w.unused_pct).toFixed(1)}`,
+                    }),
+                    w.ran_out
+                      ? `0 h (${hours(w.locked_out_h ?? 0)} locked out)`
+                      : hours(w.unused_h),
+                  ),
+                  h('td', {}, targetText(w)),
+                  h(
+                    'td',
+                    { class: 'num' },
+                    w.mean_abs_vs_even_pct === null
+                      ? '—'
+                      : `${w.mean_abs_vs_even_pct.toFixed(1)} pts`,
+                  ),
+                  h('td', { class: 'num' }, String(w.readings)),
+                );
+              }),
+            ),
+          ),
+        )
+      : h('p', { class: 'muted' }, 'No finished weeks yet.'),
+    weeks.length
+      ? h(
+          'p',
+          { class: 'muted small' },
+          'Unused at reset: the allowance left, in hours of even-pace use. vs target: points left unused, or how early it ran out against the target-empty time. Off even pace: the average gap between the readings and the even-pace line; lower means steadier pacing.',
+        )
+      : null,
+  );
+}
+
+/** A selector that finds the focused control again after the body is rebuilt, if it is in it. */
+function focusSelector(body: HTMLElement): string | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !body.contains(el)) return null;
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  if (el.classList.contains('week-prev')) return '.week-prev';
+  if (el.classList.contains('week-next')) return '.week-next';
+  const week = el.closest('tr[data-week]')?.getAttribute('data-week');
+  if (week && el.tagName === 'BUTTON') return `tr[data-week="${CSS.escape(week)}"] button`;
+  return null;
 }
 
 export function burndownPage(timeZone?: string): HTMLElement {
@@ -331,14 +1193,84 @@ export function burndownPage(timeZone?: string): HTMLElement {
     h('p', { class: 'muted' }, 'Loading…'),
   );
   const page = h('div', { class: 'bd' }, picker, body);
-  let selected = savedPlan();
+  const fromUrl = parseState(location.hash);
+  const stored = savedCompare();
+  const state: BurndownState = {
+    plan: fromUrl.plan ?? savedPlan(),
+    week: fromUrl.week ?? 'current',
+    compare: fromUrl.compare ?? stored.compare,
+    avg: fromUrl.avg ?? stored.avg,
+    view: fromUrl.view ?? null,
+  };
   let busy = false;
+  let again = false;
+  let firstPlan: string | null = null;
+  let nav: { older?: string; newer?: string } = {};
+  /** After a redraw from a control, focus it again (or the other nav button at either end). */
+  let focusAfter: [string, string] | null = null;
+
+  function writeUrl() {
+    if (!location.hash.startsWith('#/burndown')) return;
+    const plain = state.week === 'current' && state.compare === 'none' && !state.avg && !state.view;
+    const want = stateHash({
+      ...state,
+      plan: plain && state.plan === firstPlan ? null : state.plan,
+    });
+    if (location.hash !== want) history.replaceState(null, '', want);
+  }
+
+  function go(week: string, focus?: [string, string]) {
+    if (focus) focusAfter = focus;
+    state.week = week;
+    writeUrl();
+    void load();
+  }
+
+  /** The reader picked a chart range: it wins from now on (URL and localStorage). */
+  function setView(view: BurndownView) {
+    focusAfter = [`#view-${view}`, `#view-${view}`];
+    state.view = view;
+    saveView(view);
+    writeUrl();
+    void load();
+  }
+
+  function set(patch: Partial<BurndownState>, focus?: [string, string]) {
+    if (focus) focusAfter = focus;
+    Object.assign(state, patch);
+    saveCompare(state.compare, state.avg);
+    writeUrl();
+    void load();
+  }
+
+  // [ and ] anywhere on the page (outside form fields); arrows on the Prev / Next buttons.
+  const onKey = (ev: KeyboardEvent) => {
+    if (!page.isConnected) {
+      document.removeEventListener('keydown', onKey);
+      return;
+    }
+    const t = ev.target as HTMLElement;
+    if (ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    if (t.closest?.('input, select, textarea, [contenteditable="true"], dialog')) return;
+    const inNav = !!t.closest?.('.week-nav');
+    if ((ev.key === '[' || (inNav && ev.key === 'ArrowLeft')) && nav.older) {
+      ev.preventDefault();
+      go(nav.older, ['.week-prev', '.week-next']);
+    } else if ((ev.key === ']' || (inNav && ev.key === 'ArrowRight')) && nav.newer) {
+      ev.preventDefault();
+      go(nav.newer, ['.week-next', '.week-prev']);
+    }
+  };
+  document.addEventListener('keydown', onKey);
 
   async function load() {
-    if (busy) return;
+    if (busy) {
+      again = true;
+      return;
+    }
     busy = true;
     try {
-      const [pace, plans] = await Promise.all([getPace(), getPlans()]);
+      const pace = await getPace();
       const now = Date.now();
       if (!pace.plans.length) {
         picker.replaceChildren();
@@ -347,7 +1279,8 @@ export function burndownPage(timeZone?: string): HTMLElement {
         );
         return;
       }
-      if (!pace.plans.some((p) => p.plan === selected)) selected = pace.plans[0]?.plan ?? null;
+      firstPlan = pace.plans[0]?.plan ?? null;
+      if (!pace.plans.some((p) => p.plan === state.plan)) state.plan = firstPlan;
       picker.replaceChildren(
         ...(pace.plans.length > 1
           ? pace.plans.map((p) => {
@@ -355,51 +1288,112 @@ export function burndownPage(timeZone?: string): HTMLElement {
                 'button',
                 {
                   type: 'button',
-                  'aria-pressed': String(p.plan === selected),
+                  'aria-pressed': String(p.plan === state.plan),
                   'data-plan': p.plan,
                 },
                 p.name,
               );
               b.addEventListener('click', () => {
-                selected = p.plan;
+                state.plan = p.plan;
+                state.week = 'current';
                 savePlan(p.plan);
+                writeUrl();
                 void load();
               });
               return b;
             })
           : []),
       );
-      const plan = pace.plans.find((p) => p.plan === selected) as PlanPace;
+      const plan = pace.plans.find((p) => p.plan === state.plan) as PlanPace;
+      const list = await getWindows(plan.plan).catch(() => ({
+        windows: [] as WindowSummary[],
+      }));
+      const windows = list.windows;
+      let shown: WindowSummary | null = null;
+      if (state.week !== 'current') {
+        shown = windows.find((w) => w.id === state.week && !w.current) ?? null;
+        // A week that has expired (or the current one by id) falls back to the current week.
+        if (!shown) state.week = 'current';
+      }
+      const isCurrent = state.week === 'current';
+      if (isCurrent) {
+        // After a reset with no new reading yet, the chart still shows the window that just
+        // ended; name it so "Compare with" does not lay that same week over itself.
+        const reset = plan.weekly ? Date.parse(plan.weekly.reset_at) : NaN;
+        shown =
+          windows.find((w) => w.current) ??
+          windows.find((w) => Math.abs(Date.parse(w.reset_at) - reset) < 3 * HOUR) ??
+          null;
+      }
+      writeUrl();
+      const order = ['current', ...windows.filter((w) => !w.current).map((w) => w.id)];
+      const at = isCurrent ? 0 : order.indexOf(state.week);
+      nav = { older: order[at + 1], newer: at > 0 ? order[at - 1] : undefined };
+      const picked = pickView({
+        url: state.view,
+        stored: savedView(),
+        reset: isCurrent && plan.weekly?.current ? Date.parse(plan.weekly.reset_at) : null,
+        now,
+      });
+      const view: WeekView = {
+        plan,
+        windows,
+        shown,
+        isCurrent,
+        state,
+        tz: timeZone,
+        now,
+        view: picked.view,
+        viewSource: picked.source,
+        setView,
+        go,
+        set,
+      };
       const [weekly, five] = await Promise.all([
-        weeklyBox(plan, timeZone, now),
-        fiveHourBox(plan, timeZone, now),
+        weeklyBox(view),
+        isCurrent ? fiveHourBox(plan, timeZone, now) : Promise.resolve(null),
       ]);
+      // A timed refresh rebuilds the body; keep keyboard focus on the control it was on.
+      if (!focusAfter) {
+        const sel = focusSelector(body);
+        if (sel) focusAfter = [sel, sel];
+      }
       body.replaceChildren(
         h(
           'div',
-          { class: 'bd-grid' },
+          { class: `bd-grid${five ? '' : ' bd-wide'}` },
           weekly,
-          h(
-            'div',
-            { class: 'side' },
-            five,
-            pastWeeksBox(
-              plans.plans.find((x) => x.id === selected),
-              timeZone,
-            ),
-          ),
+          five ? h('div', { class: 'side' }, five) : null,
         ),
+        pastWeeksTable(view),
         pacingTable(pace, timeZone, now),
       );
+      if (focusAfter) {
+        const [first, other] = focusAfter;
+        const el = [first, other]
+          .map((sel) => body.querySelector<HTMLButtonElement>(sel))
+          .find((b) => b && !b.disabled);
+        el?.focus();
+        focusAfter = null;
+      }
     } catch (err) {
       body.replaceChildren(
         h('p', { class: 'error' }, `Could not load plans: ${(err as Error).message}`),
       );
     } finally {
       busy = false;
+      if (again) {
+        again = false;
+        void load();
+      }
     }
   }
   void load();
-  refreshWhileShown(page, () => void load());
+  refreshWhileShown(page, () => {
+    // A redraw would close an open week or compare list under the reader.
+    const active = document.activeElement;
+    if (active instanceof HTMLSelectElement && body.contains(active)) return;
+    void load();
+  });
   return page;
 }

@@ -294,15 +294,42 @@ describe('plan API', () => {
     };
     const a = pace.plans.find((p) => p.plan === 'plan-a')!;
     expect(a.five_hour?.used_pct).toBe(33);
+    // 29 points behind the even-pace line (0% at the start to 97% an hour before the reset):
+    // recovering within 24 h needs about 1.8%/h, so 1%/h is a burn.
     expect(a.weekly).toMatchObject({
       current: true,
       used_pct: 22,
-      mode: 'steady',
+      phase: 'week',
+      even_pace_pct: 51.1,
+      off_pace_pts: -29.1,
+      empty_target_pct: 97,
+      launch_cutoff_at: iso(80 - 0.5),
+      mode: 'burn',
       rate_basis_h: 3,
       rate_pct_per_h: 1,
-      suggested_model: 'small',
+      suggested_model: 'large',
       stale: false,
       readings: 7,
+    });
+    // Additive short-window projections: readings every 2 h cover the 2 h window but are too
+    // sparse for the 1 h one (the reading before it is over an hour older than the window).
+    expect(a.weekly?.projection_2h).toMatchObject({
+      window_h: 2,
+      rate_pct_per_h: 1,
+      since: iso(-2),
+      until: iso(0),
+      projected_pct: 100,
+      runs_out_at: expect.any(String),
+      reason: null,
+      reason_text: null,
+    });
+    expect(a.weekly?.projection_1h).toMatchObject({
+      window_h: 1,
+      rate_pct_per_h: null,
+      projected_pct: null,
+      runs_out_at: null,
+      reason: 'short_span',
+      reason_text: expect.stringContaining('gap in readings'),
     });
     expect(pace.plans.find((p) => p.plan === 'plan-b')!.weekly).toBeNull();
 

@@ -36,6 +36,12 @@ export interface PlanConfig {
   sessions_dir?: string;
   windows: (typeof PLAN_WINDOWS)[number][];
   empty_buffer_hours: number;
+  /** Length of the plan's weekly window in hours (168 = 7 days). */
+  window_hours: number;
+  /** Used % to reach at target empty; the rest is a reserve for the lead and final-hour jobs. */
+  empty_target_pct: number;
+  /** No new worker launches this many minutes before the reset. */
+  launch_cutoff_min: number;
 }
 export interface LocalModelConfig {
   id: string;
@@ -338,6 +344,9 @@ export function validateConfig(raw: unknown, source = '<memory>'): Config {
       'sessions_dir',
       'windows',
       'empty_buffer_hours',
+      'window_hours',
+      'empty_target_pct',
+      'launch_cutoff_min',
     ]);
     const provider = c.oneOf(p, 'provider', w, PLAN_PROVIDERS, true) ?? 'manual';
     let windows: PlanConfig['windows'] = ['weekly'];
@@ -360,7 +369,14 @@ export function validateConfig(raw: unknown, source = '<memory>'): Config {
       sessions_dir: c.str(p, 'sessions_dir', w, false),
       windows,
       empty_buffer_hours: c.num(p, 'empty_buffer_hours', w, 1, { min: 0, max: 168 }),
+      // Resets within 3 h of each other count as one window, so a window cannot be that short.
+      window_hours: c.num(p, 'window_hours', w, 168, { min: 24, max: 744 }),
+      empty_target_pct: c.num(p, 'empty_target_pct', w, 97, { min: 50, max: 100 }),
+      launch_cutoff_min: c.num(p, 'launch_cutoff_min', w, 30, { min: 0, max: 24 * 60 }),
     };
+    if (plan.empty_buffer_hours >= plan.window_hours) {
+      c.fail(`${w}.empty_buffer_hours`, 'must be less than window_hours');
+    }
     if (provider === 'anthropic-oauth' && !plan.credentials) {
       c.fail(
         `${w}.credentials`,

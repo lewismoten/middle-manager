@@ -1,6 +1,7 @@
 // Starts the built server for Playwright with a temporary config and database.
 // Removes both on exit. Usage: node e2e/serve.ts [board]
-// With `board`, serves only the 706-card synthetic board (e2e/fixtures/board.ts) on E2E_BOARD_PORT.
+// With `board`, serves the 706-card synthetic board (e2e/fixtures/board.ts) on E2E_BOARD_PORT, plus
+// plan-d, a plan about to reset, for the final-stretch view.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,8 @@ import { loadConfig } from '../server/config.ts';
 import { openAppDb } from '../server/db/index.ts';
 import { startServer } from '../server/server.ts';
 import { E2E_BOARD_PORT, E2E_PORT, E2E_TOKEN } from './constants.ts';
-import { seedPlanReadings } from './seed.ts';
+import { nearReset, seedPlanReadings } from './seed.ts';
+import { insertReadings } from '../server/plans/store.ts';
 import { seedAgents } from './fixtures/agents.ts';
 import { seedSchedules } from './fixtures/schedules.ts';
 import { seedNotes } from './fixtures/notes.ts';
@@ -36,7 +38,14 @@ plans:
   - { id: plan-a, name: "Plan A", provider: anthropic-oauth, credentials: ${JSON.stringify(conn.credentials)}, windows: [weekly, five_hour] }
   - { id: plan-b, name: "Plan B", provider: codex-sessions, sessions_dir: ${JSON.stringify(conn.sessionsDir)}, empty_buffer_hours: 2 }
   - { id: plan-c, name: "Plan C", provider: manual }
-models:
+${
+  bigBoard
+    ? `  # plan-d (this server only, so the main smoke pages keep three plans): 5-minute readings, reset
+  # about 1 h 40 min away, for the final-stretch view (e2e/final-stretch.smoke.spec.ts).
+  - { id: plan-d, name: "Plan D", provider: manual }
+`
+    : ''
+}models:
   plan-a: [small, large]
   plan-b: [medium]
 local_models:
@@ -72,6 +81,7 @@ db.prepare(
   "UPDATE tasks SET external_ref='hermes-kanban:sample:1',origin='hermes-kanban' WHERE title='Review queue metrics'",
 ).run();
 seedPlanReadings(db);
+if (bigBoard) insertReadings(db, nearReset(Date.now()));
 seedSchedules(db, path.join(dir, 'jobs.json'));
 // The agents fixture adds its own cards; the large board keeps the exact synthetic distribution.
 if (!bigBoard) {

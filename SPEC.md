@@ -66,7 +66,10 @@ plans:               # subscriptions to pace
     provider: anthropic-oauth      # collector type
     credentials: ~/.claude/.credentials.json
     windows: [weekly, five_hour]
-    empty_buffer_hours: 1          # target: run out this long before reset
+    empty_buffer_hours: 1          # target empty: this long before reset
+    empty_target_pct: 97           # used % at target empty; the rest is the lead's reserve
+    launch_cutoff_min: 30          # no new workers this many minutes before reset
+    window_hours: 168              # weekly window length (default 7 days)
   - id: codex
     name: "Codex plan"
     provider: codex-sessions
@@ -94,7 +97,7 @@ Secrets (tokens, credentials) never go in config or the DB in plain text; config
 
 - `machines`, `projects`, `plans` — mirrored from config at start (config wins).
 - `plan_readings(id, plan_id, window, used_pct, resets_at, read_at, machine_id, how)` — one row per
-  reading. Indexed by (plan_id, window, read_at).
+  reading. Indexed by (plan_id, window, read_at) and (plan_id, window, resets_at).
 - `tasks(id, short_name, title, status, lane, project_id, assignee, priority, sprint, body, origin,
   external_ref, created_at, updated_at)` — the board. Status: `backlog | todo | doing | review | blocked |
   done`. `external_ref` links an imported card (e.g. `hermes-kanban:gamemaker-claude:t_123`). Imported
@@ -118,7 +121,8 @@ Secrets (tokens, credentials) never go in config or the DB in plain text; config
 ## 6. API (JSON, `/api/v1`)
 
 Read (open on LAN; private documents need a token): `GET /health`, `/config/public`, `/machines`,
-`/plans`, `/plans/:id/readings?since=`, `/plans/pace` (see 7), `/tasks?status=&project=&q=`,
+`/plans`, `/plans/:id/readings?since=`, `/plans/pace` (see 7), `/plans/:id/windows` (current and
+past weekly windows with how each ended) and `/plans/:id/windows/:window` (one window's readings), `/tasks?status=&project=&q=`,
 `/tasks/:id` (with events and runs), `/runs?active=1&machine=&task=`, `/runs/:id`, `/jobs`,
 `/jobs/:id/runs`, `/external-jobs`, `/documents?collection=`, `/documents/:id` (rendered markdown),
 `/stats` (DB size, row counts, retention).
@@ -133,10 +137,21 @@ Agents should be able to self-report with one curl each at start and end; docume
 
 ## 7. Pacing (burndown) logic
 
-For each plan's weekly window: used %, even-pace %, recent rate (last 3 h of readings, else 24 h),
-needed rate to reach 100% at `reset - empty_buffer_hours`, projection at reset, and a mode:
-`burn` (recent < 0.75 x needed), `steady`, `conserve` (> 1.25 x needed), `stop` (>= 97% used). The mode
-maps to a suggested model rung from `models` (burn = top rung, conserve = bottom). Port the existing
+For each plan's weekly window: used %, even-pace %, off pace (used minus even pace, points), recent
+rate (last 3 h of readings, else 24 h), the needed rate, projection at reset, a phase and a mode.
+The target at target empty (`reset - empty_buffer_hours`) is near empty: `empty_target_pct`
+(default 97); the rest is a reserve for the lead and the final-hour jobs (charts shade it as
+"Reserve"). Even pace runs from 0% at the window start to that target at target empty. Phases:
+`week` (needed = the rate that gets back onto the even-pace line within 24 h), `final` (the last
+24 h before target empty; needed = straight to the target) and `final-hour` (target empty to the
+reset). Modes: `stop` (no new workers, never the lead) from `reset - launch_cutoff_min` (default
+30), at >= 99% used, or at the target before target empty; `finish` in the final hour (short jobs
+only); `conserve` when 5+ points ahead of even pace during the week or recent > 1.25 x needed;
+`burn` (recent < 0.75 x needed); else `steady`. The mode maps to a suggested model rung from
+`models` (burn = top rung, conserve and finish = bottom, stop = none). Alongside, the
+1 h and 2 h rates (from the reading at or just before now minus 1 h / 2 h to the newest reading;
+null with a reason unless the readings cover 30 min of that window) are projected to the reset
+and reported on the API, charts and cards. They do not change the mode. Port the existing
 reference implementation `tools/kaylee-usage/burndown.py` + `plan_reads.py` (see section 11) and keep its
 results identical on the same input (unit test with a fixture CSV).
 
@@ -146,7 +161,19 @@ results identical on the same input (unit test with a fixture CSV).
    agents running now (count by machine/model), board counts by status, jobs that failed in the last 24 h,
    anything marked "needs a person".
 2. **Burndown** — per plan: weekly chart (readings, even-pace line, projection, "now"), 5-hour window when
-   available, history of past weeks (how much was left unused at each reset), pacing table.
+   available, history of past weeks (how much was left unused at each reset), pacing table. A week
+   picker (Prev / Next, `[` / `]`) shows any past week's chart (final value, ran-out marker, no
+   projections). "Compare with" overlays the last 1-4 weeks or a chosen week, aligned by time since
+   window start (a window of a different length is scaled by elapsed fraction), with an optional
+   average of past weeks. The choice is kept in the URL (`#/burndown?week=&compare=&avg=`) and
+   localStorage. Past windows are formed by grouping readings whose reset times are within 3 h.
+   For the current week a "Week | Last 2 h + next 2 h" switch zooms into the final stretch
+   (now - 2 h to now + 2 h, clipped to the window; 15-minute ticks; every reading with a dot; a
+   y axis fitted to the shown range and labeled as zoomed; projections at the mode, 2 h and 1 h
+   rates; target empty, launch cutoff, reset, reserve and now; a readout of the newest reading,
+   its age, the rates and each projection at target empty and at the reset). It opens by itself
+   under 3 h before the reset until the reader picks a view (`view=` in the URL, localStorage).
+   The week view thins its readings on the server (`max_points`); the zoomed view never does.
 3. **Board** — kanban columns by status with project/assignee filters, swimlanes by agent optional; card
    detail in a side sheet (body, events, linked runs, branch, PR). Sprint/Velocity sub-tabs like the
    reference board.
